@@ -124,8 +124,10 @@ class GameEngine {
         const centerY = this.canvas.height * 0.2;
         const radius = Math.min(this.canvas.width, this.canvas.height) * 0.7;
         const colors = ['#2196F3', '#9C27B0', '#F44336', '#E91E63', '#FFEB3B', '#4CAF50'];
+        const startAngle = Math.PI + 0.2;
+        const endAngle = Math.PI * 2 - 0.2;
         for (let i = 0; i < this.numTargets; i++) {
-            const angle = Math.PI + (Math.PI / (this.numTargets - 1)) * i;
+            const angle = startAngle + ((endAngle - startAngle) / (this.numTargets - 1)) * i;
             this.targetPoints.push({
                 x: centerX + Math.cos(angle) * radius,
                 y: centerY - Math.sin(angle) * radius,

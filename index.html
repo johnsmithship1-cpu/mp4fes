@@ -299,7 +299,91 @@
             border-top: 2px solid var(--accent);
         }
 
-        /* Debug log removed */
+        /* Difficulty Buttons */
+        .diff-select-container {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .diff-btn {
+            font-family: var(--font-display);
+            border: none;
+            padding: 1rem 1.5rem;
+            color: white;
+            font-size: 1.2rem;
+            font-weight: bold;
+            border-radius: 15px;
+            cursor: pointer;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+            transition: all 0.2s;
+            text-transform: uppercase;
+        }
+
+        .diff-btn.easy {
+            background: linear-gradient(45deg, #4CAF50, #8BC34A);
+        }
+
+        .diff-btn.normal {
+            background: linear-gradient(45deg, #2196F3, #03A9F4);
+        }
+
+        .diff-btn.hard {
+            background: linear-gradient(45deg, #F44336, #FF5722);
+        }
+
+        .diff-btn:hover {
+            transform: translateY(-3px);
+            filter: brightness(1.2);
+        }
+
+        .diff-btn:active {
+            transform: scale(0.95);
+        }
+
+        /* Pause Button */
+        .pause-btn {
+            position: absolute;
+            bottom: 30px;
+            left: 30px;
+            width: 60px;
+            height: 60px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            z-index: 100;
+            pointer-events: auto;
+            transition: all 0.2s;
+        }
+
+        .pause-btn::before,
+        .pause-btn::after {
+            content: '';
+            width: 6px;
+            height: 20px;
+            background: white;
+            display: block;
+            margin: 0 2px;
+            border-radius: 2px;
+        }
+
+        .pause-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+            border-color: white;
+        }
+
+        /* Pause Screen */
+        #pause-screen h2 {
+            font-size: 3rem;
+            color: white;
+            letter-spacing: 10px;
+            margin-bottom: 2rem;
+            text-shadow: 0 0 20px rgba(255, 255, 255, 0.5);
+        }
     </style>
     <link rel="manifest" href="manifest.json">
 </head>
@@ -324,7 +408,7 @@
                         <div class="song-item active" data-song="tutorial">
                             <div class="song-info">
                                 <span class="song-name">Auto Gen Meta</span>
-                                <span class="song-difficulty">DYNAMIC</span>
+                                <span class="song-difficulty">Select Difficulty</span>
                             </div>
                         </div>
                     </div>
@@ -333,21 +417,31 @@
                         <input type="file" id="video-upload" accept="video/mp4" style="display: none;">
                         <span id="file-name">No file selected</span>
                     </div>
+                    <div class="diff-select-container">
+                        <button class="diff-btn easy" onclick="game.startGame('easy')">EASY</button>
+                        <button class="diff-btn normal" onclick="game.startGame('normal')">NORMAL</button>
+                        <button class="diff-btn hard" onclick="game.startGame('hard')">HARD</button>
+                    </div>
                     <button id="back-to-menu" class="back-btn">BACK</button>
-                    <button id="play-btn" class="action-btn">PLAY</button>
                 </div>
 
                 <!-- Gameplay UI -->
                 <div id="hud" class="screen">
-                    <div class="score-container">
-                        <div class="label">SCORE</div>
-                        <div id="score-val">0000000</div>
-                    </div>
+                    <!-- Score removed -->
                     <div class="combo-container">
                         <div id="combo-val">0</div>
                         <div class="label">COMBO</div>
                     </div>
                     <div id="judgment-text"></div>
+                    <div id="pause-btn" class="pause-btn"></div>
+                </div>
+
+                <!-- Pause Screen -->
+                <div id="pause-screen" class="screen">
+                    <h2>PAUSED</h2>
+                    <button id="resume-btn" class="action-btn">RESUME</button>
+                    <button id="pause-retry-btn" class="back-btn" style="margin-top: 2rem;">RETRY</button>
+                    <button id="pause-menu-btn" class="back-btn">MENU</button>
                 </div>
 
                 <!-- Result Screen -->
@@ -369,490 +463,7 @@
         </div>
     </div>
 
-    <script>
-        // onerror handler removed (or just console log)
-        window.onerror = function (msg, url, line, col, error) {
-            console.error(`ERR: ${msg} at ${line}:${col}`);
-            return false;
-        };
-
-        class GameEngine {
-            constructor() {
-                try {
-                    this.canvas = document.getElementById('game-canvas');
-                    this.ctx = this.canvas.getContext('2d');
-                    this.gameState = 'menu';
-                    this.score = 0;
-                    this.combo = 0;
-                    this.maxCombo = 0;
-                    this.notes = [];
-                    this.targetPoints = [];
-                    this.numTargets = 6;
-                    this.lastTime = 0;
-                    this.startTime = 0;
-                    this.isPlaying = false;
-                    this.stats = { perfect: 0, great: 0, good: 0, miss: 0 };
-
-                    // Audio
-                    this.audioCtx = null;
-                    this.analyser = null;
-                    this.video = document.getElementById('game-video');
-                    this.currentFile = null;
-                    this.tapSoundBuffer = null;
-                    this.tapSoundAudio = null;
-
-                    // Input Tracking
-                    this.activeTouches = new Map();
-
-                    // Analysis
-                    this.lastAnalysisTime = 0;
-                    this.beatThreshold = 140;
-                    this.minBeatInterval = 400;
-                    this.lastEnergy = 0;
-
-                    this.init();
-                } catch (e) { console.error(e); }
-            }
-
-            init() {
-                this.log("Initializing...");
-                this.resize();
-                window.addEventListener('resize', () => this.resize());
-                this.setupTargets();
-                this.bindEvents();
-                this.renderLoop();
-            }
-
-            log(msg) {
-                console.log("[RhythmGame] " + msg);
-            }
-
-            initAudio() {
-                if (this.audioCtx) return;
-                this.log("Init Audio...");
-                try {
-                    const AudioContext = window.AudioContext || window.webkitAudioContext;
-                    this.audioCtx = new AudioContext();
-                    this.analyser = this.audioCtx.createAnalyser();
-                    this.analyser.fftSize = 256;
-                    this.video.crossOrigin = "anonymous";
-                    this.source = this.audioCtx.createMediaElementSource(this.video);
-                    this.source.connect(this.analyser);
-                    this.analyser.connect(this.audioCtx.destination);
-                    this.loadTapSound();
-                    this.log("Audio OK");
-                } catch (e) {
-                    this.log("Audio fail: " + e.message);
-                }
-            }
-
-            loadTapSound() {
-                try {
-                    const audio = new Audio('SleighBells.mp3');
-                    audio.addEventListener('canplaythrough', () => {
-                        this.tapSoundAudio = audio;
-                        this.log("Tap sound loaded");
-                    });
-                    audio.load();
-                } catch (e) {
-                    this.log("Tap sound error: " + e.message);
-                }
-            }
-
-            playTapSound() {
-                if (!this.audioCtx) return;
-                if (this.tapSoundAudio) {
-                    try {
-                        const audio = this.tapSoundAudio.cloneNode();
-                        audio.volume = 1.0;
-                        audio.play().catch(e => { });
-                        return;
-                    } catch (e) { }
-                }
-            }
-
-            resize() {
-                const container = document.getElementById('game-container');
-                this.canvas.width = container.clientWidth;
-                this.canvas.height = container.clientHeight;
-                this.setupTargets();
-            }
-
-            setupTargets() {
-                this.targetPoints = [];
-                const centerX = this.canvas.width / 2;
-                const centerY = this.canvas.height * 0.2;
-                const radius = Math.min(this.canvas.width, this.canvas.height) * 0.7;
-                const colors = ['#2196F3', '#9C27B0', '#F44336', '#E91E63', '#FFEB3B', '#4CAF50'];
-                for (let i = 0; i < this.numTargets; i++) {
-                    const angle = Math.PI + (Math.PI / (this.numTargets - 1)) * i;
-                    this.targetPoints.push({
-                        x: centerX + Math.cos(angle) * radius,
-                        y: centerY - Math.sin(angle) * radius,
-                        color: colors[i]
-                    });
-                }
-            }
-
-            bindEvents() {
-                document.getElementById('start-btn').onclick = () => {
-                    this.initAudio();
-                    this.switchScreen('song-select');
-                };
-                document.getElementById('back-to-menu').onclick = () => {
-                    if (this.video) { this.video.pause(); this.video.currentTime = 0; }
-                    this.switchScreen('menu');
-                };
-                document.getElementById('play-btn').onclick = () => {
-                    if (this.currentFile) this.startGame();
-                    else alert('Please select MP4');
-                };
-                document.getElementById('restart-btn').onclick = () => this.startGame();
-                document.getElementById('quit-btn').onclick = () => this.switchScreen('menu');
-
-                const upload = document.getElementById('video-upload');
-                upload.onchange = (e) => {
-                    const file = e.target.files[0];
-                    if (file) {
-                        this.currentFile = file;
-                        document.getElementById('file-name').innerText = file.name;
-                        this.video.src = URL.createObjectURL(file);
-                        this.video.load();
-                    }
-                };
-
-                const canvas = this.canvas;
-                canvas.addEventListener('touchstart', (e) => this.handleTouchStart(e), { passive: false });
-                canvas.addEventListener('touchmove', (e) => this.handleTouchMove(e), { passive: false });
-                canvas.addEventListener('touchend', (e) => this.handleTouchEnd(e), { passive: false });
-                canvas.addEventListener('touchcancel', (e) => this.handleTouchEnd(e), { passive: false });
-
-                canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
-                canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
-                canvas.addEventListener('mouseup', (e) => this.handleMouseUp(e));
-            }
-
-            switchScreen(screenName) {
-                this.gameState = screenName;
-                document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-                let sid = screenName + '-screen';
-                if (screenName === 'playing') sid = 'hud';
-                if (screenName === 'song-select') sid = 'song-selection-screen';
-                document.getElementById(sid)?.classList.add('active');
-                this.isPlaying = (screenName === 'playing');
-            }
-
-            startGame() {
-                this.initAudio();
-                if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
-                this.score = 0; this.combo = 0; this.maxCombo = 0;
-                this.notes = [];
-                this.stats = { perfect: 0, great: 0, good: 0, miss: 0 };
-                this.activeTouches.clear();
-                this.updateHUD();
-                this.switchScreen('playing');
-
-                this.video.classList.add('visible');
-                this.video.currentTime = 0;
-                this.video.volume = 0.5;
-                this.video.play().catch(e => this.log("Play err: " + e.message));
-
-                this.startTime = performance.now();
-                this.lastAnalysisTime = 0;
-            }
-
-            spawnNote() {
-                const spawnTime = performance.now() - this.startTime;
-                const duration = 1500;
-                const rand = Math.random();
-
-                const getRandomTarget = (exclude = []) => {
-                    let idx;
-                    do { idx = Math.floor(Math.random() * this.numTargets); } while (exclude.includes(idx));
-                    return idx;
-                };
-
-                // No long notes, only normal (80%) or simultaneous (20%)
-                if (rand < 0.2) {
-                    const t1 = getRandomTarget();
-                    const t2 = getRandomTarget([t1]);
-                    this.addNote(t1, spawnTime, duration, 'normal', 0, true);
-                    this.addNote(t2, spawnTime, duration, 'normal', 0, true);
-                } else {
-                    const t = getRandomTarget();
-                    this.addNote(t, spawnTime, duration, 'normal');
-                }
-            }
-
-            addNote(targetIdx, spawnTime, duration, type, holdDuration = 0, isSimultaneous = false) {
-                this.notes.push({
-                    targetIdx, spawnTime, duration, type, holdDuration,
-                    isSimultaneous,
-                    isHolding: false,
-                    processed: false
-                });
-            }
-
-            // Input Handling
-            getHitTargetIdx(cx, cy) {
-                const rect = this.canvas.getBoundingClientRect();
-                const x = cx - rect.left;
-                const y = cy - rect.top;
-                let closest = -1;
-                let minDist = 70;
-                this.targetPoints.forEach((pt, i) => {
-                    const d = Math.sqrt((x - pt.x) ** 2 + (y - pt.y) ** 2);
-                    if (d < minDist) { minDist = d; closest = i; }
-                });
-                return closest;
-            }
-
-            handleTouchStart(e) {
-                e.preventDefault();
-                for (let i = 0; i < e.changedTouches.length; i++) {
-                    const t = e.changedTouches[i];
-                    const idx = this.getHitTargetIdx(t.clientX, t.clientY);
-                    if (idx !== -1) {
-                        this.activeTouches.set(t.identifier, idx);
-                        this.checkHit(idx);
-                    }
-                }
-            }
-
-            handleTouchMove(e) {
-                e.preventDefault();
-                for (let i = 0; i < e.changedTouches.length; i++) {
-                    const t = e.changedTouches[i];
-                    const idx = this.getHitTargetIdx(t.clientX, t.clientY);
-                    const prev = this.activeTouches.get(t.identifier);
-                    if (idx !== -1 && idx !== prev) {
-                        this.activeTouches.set(t.identifier, idx);
-                    } else if (idx === -1) {
-                        this.activeTouches.delete(t.identifier);
-                    }
-                }
-            }
-
-            handleTouchEnd(e) {
-                e.preventDefault();
-                for (let i = 0; i < e.changedTouches.length; i++) {
-                    this.activeTouches.delete(e.changedTouches[i].identifier);
-                }
-            }
-
-            handleMouseDown(e) {
-                const idx = this.getHitTargetIdx(e.clientX, e.clientY);
-                if (idx !== -1) {
-                    this.activeTouches.set('mouse', idx);
-                    this.checkHit(idx);
-                }
-            }
-            handleMouseMove(e) {
-                const idx = this.getHitTargetIdx(e.clientX, e.clientY);
-                if (idx !== -1 && this.activeTouches.has('mouse')) {
-                    this.activeTouches.set('mouse', idx);
-                } else if (idx === -1) {
-                    this.activeTouches.delete('mouse');
-                }
-            }
-            handleMouseUp(e) {
-                this.activeTouches.delete('mouse');
-            }
-
-            isTargetHeld(idx) {
-                for (let val of this.activeTouches.values()) {
-                    if (val === idx) return true;
-                }
-                return false;
-            }
-
-            checkHit(targetIdx) {
-                if (!this.isPlaying) return;
-                const now = performance.now() - this.startTime;
-
-                let found = null;
-                let minDiff = Infinity;
-
-                for (let note of this.notes) {
-                    if (note.targetIdx === targetIdx && !note.processed) {
-                        const arrTime = note.spawnTime + note.duration;
-                        const diff = Math.abs(now - arrTime);
-                        if (diff < 150 && diff < minDiff) {
-                            minDiff = diff; found = note;
-                        }
-                    }
-                }
-
-                if (found) {
-                    let j = 'MISS';
-                    if (minDiff < 50) j = 'PERFECT';
-                    else if (minDiff < 100) j = 'GREAT';
-                    else j = 'GOOD';
-
-                    found.processed = true;
-                    this.applyJudgment(j);
-                }
-            }
-
-            applyJudgment(j, countStats = true) {
-                this.showJudgment(j);
-                if (j === 'MISS') {
-                    this.combo = 0;
-                    if (countStats) this.stats.miss++;
-                } else {
-                    this.playTapSound();
-                    this.combo++;
-                    this.maxCombo = Math.max(this.combo, this.maxCombo);
-                    let score = 500;
-                    if (j === 'PERFECT') { score = 1000; if (countStats) this.stats.perfect++; }
-                    else if (j === 'GREAT') { score = 750; if (countStats) this.stats.great++; }
-                    else { if (countStats) this.stats.good++; }
-                    this.score += score + this.combo * 10;
-                }
-                this.updateHUD();
-            }
-
-            updateHUD() {
-                document.getElementById('score-val').innerText = String(this.score).padStart(7, '0');
-                document.getElementById('combo-val').innerText = this.combo;
-                document.querySelector('.combo-container').classList.toggle('visible', this.combo > 0);
-            }
-
-            showJudgment(text) {
-                const el = document.getElementById('judgment-text');
-                el.innerText = text;
-                el.style.color = `var(--${text.toLowerCase()})`;
-                el.style.animation = 'none';
-                el.offsetHeight;
-                el.style.animation = null;
-            }
-
-            renderLoop(t) {
-                try {
-                    this.update(t);
-                    this.draw();
-                    requestAnimationFrame(t => this.renderLoop(t));
-                } catch (e) {
-                    this.log("Render: " + e.message);
-                }
-            }
-
-            update(t) {
-                if (!this.isPlaying) return;
-                const now = t - this.startTime;
-
-                if (this.analyser) {
-                    const data = new Uint8Array(this.analyser.frequencyBinCount);
-                    this.analyser.getByteFrequencyData(data);
-                    let energy = 0; for (let i = 0; i < 5; i++) energy += data[i];
-                    energy /= 5;
-                    const diff = energy - this.lastEnergy;
-                    if (energy > this.beatThreshold && diff > 5 && now - this.lastAnalysisTime > this.minBeatInterval) {
-                        this.spawnNote();
-                        this.lastAnalysisTime = now;
-                    }
-                    this.lastEnergy = energy;
-                }
-
-                this.notes.forEach(note => {
-                    if (note.processed) return;
-                    const arrTime = note.spawnTime + note.duration;
-
-                    if (now > arrTime + 150) {
-                        note.processed = true;
-                        this.applyJudgment('MISS');
-                    }
-                });
-
-                this.notes = this.notes.filter(n => !n.processed || (now - (n.spawnTime + n.duration) < 1000));
-
-                if (this.video.ended) this.endGame();
-            }
-
-            endGame() {
-                this.isPlaying = false;
-                this.video.pause();
-                this.video.classList.remove('visible');
-                document.getElementById('res-perfect').innerText = this.stats.perfect;
-                document.getElementById('res-great').innerText = this.stats.great;
-                document.getElementById('res-good').innerText = this.stats.good;
-                document.getElementById('res-miss').innerText = this.stats.miss;
-                document.getElementById('res-score').innerText = this.score;
-                this.switchScreen('result');
-            }
-
-            draw() {
-                try {
-                    const { ctx, canvas } = this;
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    const centerX = canvas.width / 2;
-                    const centerY = canvas.height * 0.2;
-
-                    // Targets
-                    this.targetPoints.forEach((pt, idx) => {
-                        ctx.beginPath();
-                        ctx.arc(pt.x, pt.y, 40, 0, Math.PI * 2);
-                        ctx.strokeStyle = pt.color; ctx.lineWidth = 3; ctx.stroke();
-
-                        ctx.beginPath();
-                        ctx.arc(pt.x, pt.y, 35, 0, Math.PI * 2);
-                        ctx.fillStyle = this.isTargetHeld(idx) ? pt.color + '88' : pt.color + '33';
-                        ctx.fill();
-                    });
-
-                    if (this.isPlaying) {
-                        const now = performance.now() - this.startTime;
-
-                        // Draw Notes
-                        this.notes.forEach(note => {
-                            if (note.processed) return;
-                            this.drawHead(note, now, centerX, centerY);
-                        });
-                    }
-                } catch (e) {
-                    console.error("Draw error", e);
-                    throw e;
-                }
-            }
-
-            getNotePos(note, now, cx, cy) {
-                const elapsed = now - note.spawnTime;
-                const prog = elapsed / note.duration;
-                const target = this.targetPoints[note.targetIdx];
-                const x = cx + (target.x - cx) * prog;
-                const y = cy + (target.y - cy) * prog;
-                return { x, y, progress: prog, color: target.color };
-            }
-
-            drawHead(note, now, cx, cy) {
-                let pos;
-                const target = this.targetPoints[note.targetIdx];
-                pos = this.getNotePos(note, now, cx, cy);
-
-                const elapsed = now - note.spawnTime;
-                const prog = elapsed / note.duration;
-                if (prog > 1.2) return;
-
-                this.ctx.beginPath();
-                this.ctx.arc(pos.x, pos.y, 30, 0, Math.PI * 2);
-
-                this.ctx.lineWidth = 5;
-                this.ctx.strokeStyle = pos.color;
-                this.ctx.stroke();
-
-                if (note.isSimultaneous) {
-                    this.ctx.beginPath();
-                    this.ctx.moveTo(pos.x - 20, pos.y);
-                    this.ctx.lineTo(pos.x + 20, pos.y);
-                    this.ctx.lineWidth = 5;
-                    this.ctx.strokeStyle = pos.color;
-                    this.ctx.stroke();
-                }
-            }
-        }
-        window.onload = () => { window.game = new GameEngine(); };
-        if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');
-    </script>
+    <script src="game.js"></script>
 </body>
 
 </html>

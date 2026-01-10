@@ -1,48 +1,52 @@
-/**
- * Rhythm Game Core Engine
- */
+window.onerror = function (msg, url, line, col, error) {
+    console.error(`ERR: ${msg} at ${line}:${col}`);
+    return false;
+};
 
 class GameEngine {
     constructor() {
-        this.canvas = document.getElementById('game-canvas');
-        this.ctx = this.canvas.getContext('2d');
+        try {
+            this.canvas = document.getElementById('game-canvas');
+            this.ctx = this.canvas.getContext('2d');
+            this.gameState = 'menu';
+            this.score = 0;
+            this.combo = 0;
+            this.maxCombo = 0;
+            this.notes = [];
+            this.targetPoints = [];
+            this.numTargets = 6;
+            this.lastTime = 0;
+            this.startTime = 0;
+            this.isPlaying = false;
+            this.stats = { perfect: 0, great: 0, good: 0, miss: 0 };
 
-        this.gameState = 'menu'; // menu, song-select, playing, result
-        this.score = 0;
-        this.combo = 0;
-        this.maxCombo = 0;
+            // Audio
+            this.audioCtx = null;
+            this.analyser = null;
+            this.video = document.getElementById('game-video');
+            this.currentFile = null;
+            this.tapSoundBuffer = null;
+            this.tapSoundAudio = null;
 
-        this.notes = [];
-        this.targetPoints = [];
-        this.numTargets = 6;
+            // Input Tracking
+            this.activeTouches = new Map();
 
-        this.lastTime = 0;
-        this.startTime = 0;
-        this.isPlaying = false;
+            // Analysis
+            this.lastAnalysisTime = 0;
+            this.beatThreshold = 140;
+            this.minBeatInterval = 400;
+            this.lastEnergy = 0;
 
-        this.stats = {
-            perfect: 0,
-            great: 0,
-            good: 0,
-            miss: 0
-        };
+            // Settings
+            this.difficulty = 'normal';
+            this.isPaused = false;
 
-        // Input Tracking
-        // Map<identifier, targetIdx>
-        this.activeTouches = new Map();
-
-        // Audio Analysis
-        this.audioCtx = null;
-        this.analyser = null;
-        this.source = null;
-        this.video = document.getElementById('game-video');
-        this.currentFile = null;
-
-        this.init();
+            this.init();
+        } catch (e) { console.error(e); }
     }
 
     init() {
-        this.log("Initializing GameEngine...");
+        this.log("Initializing...");
         this.resize();
         window.addEventListener('resize', () => this.resize());
         this.setupTargets();
@@ -51,37 +55,57 @@ class GameEngine {
     }
 
     log(msg) {
-        const logger = document.getElementById('debug-log');
-        if (logger) {
-            logger.innerText = msg + "\n" + logger.innerText;
-        }
         console.log("[RhythmGame] " + msg);
     }
 
     initAudio() {
         if (this.audioCtx) return;
-        this.log("Attempting to init AudioContext...");
+        this.log("Init Audio...");
         try {
             const AudioContext = window.AudioContext || window.webkitAudioContext;
-            if (!AudioContext) {
-                this.log("Error: AudioContext not supported");
-                return;
-            }
             this.audioCtx = new AudioContext();
             this.analyser = this.audioCtx.createAnalyser();
             this.analyser.fftSize = 256;
-
-            if (!this.video) {
-                this.log("Error: game-video element not found");
-                return;
-            }
-
+            this.video.crossOrigin = "anonymous";
             this.source = this.audioCtx.createMediaElementSource(this.video);
-            this.source.connect(this.analyser);
+
+            // Create GainNode for volume control
+            this.gainNode = this.audioCtx.createGain();
+            this.gainNode.gain.value = 0.5; // Set to 50%
+
+            this.source.connect(this.gainNode);
+            this.gainNode.connect(this.analyser);
             this.analyser.connect(this.audioCtx.destination);
-            this.log("AudioContext initialized successfully");
+
+            this.loadTapSound();
+            this.log("Audio OK");
         } catch (e) {
-            this.log("Audio init error: " + e.message);
+            this.log("Audio fail: " + e.message);
+        }
+    }
+
+    loadTapSound() {
+        try {
+            const audio = new Audio('SleighBells.mp3');
+            audio.addEventListener('canplaythrough', () => {
+                this.tapSoundAudio = audio;
+                this.log("Tap sound loaded");
+            });
+            audio.load();
+        } catch (e) {
+            this.log("Tap sound error: " + e.message);
+        }
+    }
+
+    playTapSound() {
+        if (!this.audioCtx) return;
+        if (this.tapSoundAudio) {
+            try {
+                const audio = this.tapSoundAudio.cloneNode();
+                audio.volume = 1.0;
+                audio.play().catch(e => { });
+                return;
+            } catch (e) { }
         }
     }
 
@@ -89,58 +113,47 @@ class GameEngine {
         const container = document.getElementById('game-container');
         this.canvas.width = container.clientWidth;
         this.canvas.height = container.clientHeight;
-        this.setupTargets(); // Re-calculate points on resize
+        this.setupTargets();
     }
 
     setupTargets() {
         this.targetPoints = [];
-        const width = this.canvas.width;
-        const height = this.canvas.height;
-
-        // 半円状に9つのポイントを配置
-        // 中心(横中央, 上から少し)から放射状に広がる
-        const centerX = width / 2;
-        const centerY = height * 0.2;
-        const radius = Math.min(width, height) * 0.7;
-
-        const targetColors = ['#2196F3', '#9C27B0', '#F44336', '#E91E63', '#FFEB3B', '#4CAF50'];
-
+        const centerX = this.canvas.width / 2;
+        const centerY = this.canvas.height * 0.2;
+        const radius = Math.min(this.canvas.width, this.canvas.height) * 0.7;
+        const colors = ['#2196F3', '#9C27B0', '#F44336', '#E91E63', '#FFEB3B', '#4CAF50'];
         for (let i = 0; i < this.numTargets; i++) {
-            // 角度: 180度を分割 (6個の場合はより広く配置)
             const angle = Math.PI + (Math.PI / (this.numTargets - 1)) * i;
             this.targetPoints.push({
                 x: centerX + Math.cos(angle) * radius,
                 y: centerY - Math.sin(angle) * radius,
-                angle: angle,
-                color: targetColors[i % targetColors.length]
+                color: colors[i]
             });
         }
     }
 
     bindEvents() {
         document.getElementById('start-btn').onclick = () => {
-            this.log("GAME START clicked");
             this.initAudio();
             this.switchScreen('song-select');
         };
         document.getElementById('back-to-menu').onclick = () => {
-            this.log("BACK clicked");
-            if (this.video) this.video.pause();
+            if (this.video) { this.video.pause(); this.video.currentTime = 0; }
             this.switchScreen('menu');
         };
-        document.getElementById('play-btn').onclick = () => {
-            this.log("PLAY clicked");
-            if (this.currentFile) this.startGame();
-            else {
-                this.log("Error: No file selected");
-                alert('Please select an MP4 file first!');
-            }
+        // Play button removed, triggered via startGame('diff')
+
+        document.getElementById('pause-btn').onclick = () => this.togglePause();
+        document.getElementById('resume-btn').onclick = () => this.togglePause();
+        document.getElementById('pause-retry-btn').onclick = () => {
+            this.togglePause(); // Unpause logic to reset state properly
+            this.startGame(this.difficulty);
         };
-        document.getElementById('restart-btn').onclick = () => this.startGame();
-        document.getElementById('quit-btn').onclick = () => {
-            if (this.video) this.video.pause();
+        document.getElementById('pause-menu-btn').onclick = () => {
+            this.togglePause();
+            this.endGame(); // Or switchScreen('menu')
             this.switchScreen('menu');
-        }
+        };
 
         const upload = document.getElementById('video-upload');
         upload.onchange = (e) => {
@@ -153,189 +166,152 @@ class GameEngine {
             }
         };
 
-        // Updated Input Listeners
-        this.canvas.addEventListener('touchstart', (e) => this.handleTouchStart(e), { passive: false });
-        this.canvas.addEventListener('touchmove', (e) => this.handleTouchMove(e), { passive: false });
-        this.canvas.addEventListener('touchend', (e) => this.handleTouchEnd(e), { passive: false });
-        this.canvas.addEventListener('touchcancel', (e) => this.handleTouchEnd(e), { passive: false });
+        const canvas = this.canvas;
+        canvas.addEventListener('touchstart', (e) => this.handleTouchStart(e), { passive: false });
+        canvas.addEventListener('touchmove', (e) => this.handleTouchMove(e), { passive: false });
+        canvas.addEventListener('touchend', (e) => this.handleTouchEnd(e), { passive: false });
+        canvas.addEventListener('touchcancel', (e) => this.handleTouchEnd(e), { passive: false });
 
-        this.canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
-        this.canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
-        this.canvas.addEventListener('mouseup', (e) => this.handleMouseUp(e));
-        // this.canvas.addEventListener('mouseleave', (e) => this.handleMouseUp(e));
+        canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
+        canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+        canvas.addEventListener('mouseup', (e) => this.handleMouseUp(e));
     }
 
     switchScreen(screenName) {
         this.gameState = screenName;
         document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        let sid = screenName + '-screen';
+        if (screenName === 'playing') sid = 'hud';
+        if (screenName === 'song-select') sid = 'song-selection-screen';
+        document.getElementById(sid)?.classList.add('active');
+        this.isPlaying = (screenName === 'playing');
 
-        let screenId = `${screenName}-screen`;
-        if (screenName === 'playing') screenId = 'hud';
-        if (screenName === 'song-select') screenId = 'song-selection-screen';
-
-        const el = document.getElementById(screenId);
-        if (el) el.classList.add('active');
-
-        if (screenName === 'playing') {
-            this.isPlaying = true;
-        } else {
-            this.isPlaying = false;
-        }
+        // Hide Pause Screen if open
+        document.getElementById('pause-screen').classList.remove('active');
     }
 
-    startGame() {
-        this.initAudio();
-        if (this.audioCtx.state === 'suspended') {
-            this.audioCtx.resume();
+    startGame(difficulty = 'normal') {
+        if (!this.currentFile) {
+            alert("Please select an MP4 file first!");
+            return;
         }
+        this.difficulty = difficulty;
+        this.log(`Start Game: ${difficulty}`);
 
-        this.score = 0;
-        this.combo = 0;
-        this.maxCombo = 0;
+        this.initAudio();
+        if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
+        this.score = 0; this.combo = 0; this.maxCombo = 0;
         this.notes = [];
         this.stats = { perfect: 0, great: 0, good: 0, miss: 0 };
         this.activeTouches.clear();
+        this.isPaused = false;
         this.updateHUD();
         this.switchScreen('playing');
 
         this.video.classList.add('visible');
         this.video.currentTime = 0;
+        this.video.volume = 0.5;
+        this.video.play().catch(e => this.log("Play err: " + e.message));
 
-        // Ensure video is ready to play
-        const playPromise = this.video.play();
-        if (playPromise !== undefined) {
-            playPromise.catch(error => {
-                console.error("Playback failed:", error);
-                // Auto-retry if needed or show user message
-            });
-        }
         this.startTime = performance.now();
-
         this.lastAnalysisTime = 0;
-        this.beatThreshold = 180; // 音量しきい値
-        this.minBeatInterval = 200; // 次のノーツまでの最小間隔(ms)
     }
 
-    // -------------------------------------------------------------------------
-    // Note Management
-    // -------------------------------------------------------------------------
+    togglePause() {
+        if (!this.isPlaying) return;
+        this.isPaused = !this.isPaused;
+
+        const pauseScreen = document.getElementById('pause-screen');
+
+        if (this.isPaused) {
+            this.video.pause();
+            if (this.audioCtx) this.audioCtx.suspend();
+            pauseScreen.classList.add('active');
+            // Store pause time to adjust startTime on resume?
+            this.pauseStartTime = performance.now();
+        } else {
+            this.video.play();
+            if (this.audioCtx) this.audioCtx.resume();
+            pauseScreen.classList.remove('active');
+            // Adjust startTime by the duration paused
+            const pauseDuration = performance.now() - this.pauseStartTime;
+            this.startTime += pauseDuration;
+        }
+    }
 
     spawnNote() {
+        if (this.isPaused) return;
         const spawnTime = performance.now() - this.startTime;
-        const travelDuration = 1500; // 1.5秒で到達
+
+        // Difficulty Settings
+        let duration = 1500;
+        if (this.difficulty === 'easy') duration = 2000;
+        if (this.difficulty === 'hard') duration = 1000;
 
         const rand = Math.random();
 
-        // Target index randomization helper
         const getRandomTarget = (exclude = []) => {
             let idx;
-            do {
-                idx = Math.floor(Math.random() * this.numTargets);
-            } while (exclude.includes(idx));
+            do { idx = Math.floor(Math.random() * this.numTargets); } while (exclude.includes(idx));
             return idx;
         };
 
-        if (rand < 0.15) {
-            // --- Simultaneous (Double) Note ---
-            const target1 = getRandomTarget();
-            const target2 = getRandomTarget([target1]);
-
-            this.addNote(target1, spawnTime, travelDuration, 'normal', 0, true);
-            this.addNote(target2, spawnTime, travelDuration, 'normal', 0, true);
-
-        } else if (rand < 0.3) {
-            // --- Long Note ---
-            const target = getRandomTarget();
-            const holdDuration = 500 + Math.random() * 1000; // 0.5s - 1.5s
-            this.addNote(target, spawnTime, travelDuration, 'long', holdDuration);
-
+        // No long notes, only normal (80%) or simultaneous (20%)
+        if (rand < 0.2) {
+            const t1 = getRandomTarget();
+            const t2 = getRandomTarget([t1]);
+            this.addNote(t1, spawnTime, duration, 'normal', 0, true);
+            this.addNote(t2, spawnTime, duration, 'normal', 0, true);
         } else {
-            // --- Normal Note ---
-            const target = getRandomTarget();
-            this.addNote(target, spawnTime, travelDuration, 'normal');
+            const t = getRandomTarget();
+            this.addNote(t, spawnTime, duration, 'normal');
         }
     }
 
     addNote(targetIdx, spawnTime, duration, type, holdDuration = 0, isSimultaneous = false) {
         this.notes.push({
-            targetIdx,
-            spawnTime,
-            duration, // Travel time
-            type, // 'normal' | 'long'
-            holdDuration,
-            isHolding: false,
+            targetIdx, spawnTime, duration, type, holdDuration,
             isSimultaneous,
-            processed: false // If 'long', processed means "finished successfully"
+            isHolding: false,
+            processed: false
         });
     }
 
-    updateHUD() {
-        document.getElementById('score-val').innerText = String(this.score).padStart(7, '0');
-        document.getElementById('combo-val').innerText = this.combo;
-        const comboContainer = document.querySelector('.combo-container');
-        if (this.combo > 0) comboContainer.classList.add('visible');
-        else comboContainer.classList.remove('visible');
-    }
-
-    showJudgment(text) {
-        const el = document.getElementById('judgment-text');
-        el.innerText = text;
-        el.style.color = `var(--${text.toLowerCase()})`;
-        // Reset animation
-        el.style.animation = 'none';
-        el.offsetHeight; // trigger reflow
-        el.style.animation = null;
-    }
-
-    // -------------------------------------------------------------------------
     // Input Handling
-    // -------------------------------------------------------------------------
-
-    getHitTargetIdx(clientX, clientY) {
+    getHitTargetIdx(cx, cy) {
         const rect = this.canvas.getBoundingClientRect();
-        const x = clientX - rect.left;
-        const y = clientY - rect.top;
-
-        let closestIdx = -1;
-        let minDist = 60; // Slightly larger hit area
-
-        this.targetPoints.forEach((pt, idx) => {
+        const x = cx - rect.left;
+        const y = cy - rect.top;
+        let closest = -1;
+        let minDist = 70;
+        this.targetPoints.forEach((pt, i) => {
             const d = Math.sqrt((x - pt.x) ** 2 + (y - pt.y) ** 2);
-            if (d < minDist) {
-                minDist = d;
-                closestIdx = idx;
-            }
+            if (d < minDist) { minDist = d; closest = i; }
         });
-        return closestIdx;
+        return closest;
     }
 
     handleTouchStart(e) {
         e.preventDefault();
-        const touches = e.changedTouches;
-        for (let i = 0; i < touches.length; i++) {
-            const t = touches[i];
-            const targetIdx = this.getHitTargetIdx(t.clientX, t.clientY);
-            if (targetIdx !== -1) {
-                this.activeTouches.set(t.identifier, targetIdx);
-                this.checkHit(targetIdx);
+        for (let i = 0; i < e.changedTouches.length; i++) {
+            const t = e.changedTouches[i];
+            const idx = this.getHitTargetIdx(t.clientX, t.clientY);
+            if (idx !== -1) {
+                this.activeTouches.set(t.identifier, idx);
+                this.checkHit(idx);
             }
         }
     }
 
     handleTouchMove(e) {
         e.preventDefault();
-        const touches = e.changedTouches;
-        for (let i = 0; i < touches.length; i++) {
-            const t = touches[i];
-            const targetIdx = this.getHitTargetIdx(t.clientX, t.clientY);
-
-            // Check if finger moved to a DIFFERENT target
-            const prevTarget = this.activeTouches.get(t.identifier);
-            if (targetIdx !== -1 && targetIdx !== prevTarget) {
-                this.activeTouches.set(t.identifier, targetIdx);
-                // Sliding onto a new target acts like a press for new notes (optional playstyle)
-                // For now, let's just track it for holding purposes
-            } else if (targetIdx === -1) {
+        for (let i = 0; i < e.changedTouches.length; i++) {
+            const t = e.changedTouches[i];
+            const idx = this.getHitTargetIdx(t.clientX, t.clientY);
+            const prev = this.activeTouches.get(t.identifier);
+            if (idx !== -1 && idx !== prev) {
+                this.activeTouches.set(t.identifier, idx);
+            } else if (idx === -1) {
                 this.activeTouches.delete(t.identifier);
             }
         }
@@ -343,394 +319,239 @@ class GameEngine {
 
     handleTouchEnd(e) {
         e.preventDefault();
-        const touches = e.changedTouches;
-        for (let i = 0; i < touches.length; i++) {
-            const t = touches[i];
-            this.activeTouches.delete(t.identifier);
+        for (let i = 0; i < e.changedTouches.length; i++) {
+            this.activeTouches.delete(e.changedTouches[i].identifier);
         }
     }
 
-    // Mouse abstraction
     handleMouseDown(e) {
-        const targetIdx = this.getHitTargetIdx(e.clientX, e.clientY);
-        if (targetIdx !== -1) {
-            this.activeTouches.set('mouse', targetIdx);
-            this.checkHit(targetIdx);
+        const idx = this.getHitTargetIdx(e.clientX, e.clientY);
+        if (idx !== -1) {
+            this.activeTouches.set('mouse', idx);
+            this.checkHit(idx);
         }
     }
     handleMouseMove(e) {
-        const targetIdx = this.getHitTargetIdx(e.clientX, e.clientY);
-        if (targetIdx !== -1) {
-            // If currently holding mouse, update target?
-            // Simple mouse implementation: click only
-            if (this.activeTouches.has('mouse')) {
-                this.activeTouches.set('mouse', targetIdx);
-            }
-        } else {
-            if (this.activeTouches.has('mouse')) {
-                this.activeTouches.delete('mouse'); // Lost focus
-            }
+        const idx = this.getHitTargetIdx(e.clientX, e.clientY);
+        if (idx !== -1 && this.activeTouches.has('mouse')) {
+            this.activeTouches.set('mouse', idx);
+        } else if (idx === -1) {
+            this.activeTouches.delete('mouse');
         }
     }
     handleMouseUp(e) {
         this.activeTouches.delete('mouse');
     }
 
-    // Is a target currently being held?
-    isTargetHeld(targetIdx) {
+    isTargetHeld(idx) {
         for (let val of this.activeTouches.values()) {
-            if (val === targetIdx) return true;
+            if (val === idx) return true;
         }
         return false;
     }
 
     checkHit(targetIdx) {
         if (!this.isPlaying) return;
-
         const now = performance.now() - this.startTime;
-        const hitWindow = 150; // ms
 
-        // Find nearest unprocessed note on this target
-        // For Long notes, this is the "Start" hit.
-        let foundNote = null;
-
-        // Priority: Find closest Note in time
+        let found = null;
         let minDiff = Infinity;
 
         for (let note of this.notes) {
-            if (note.targetIdx === targetIdx && !note.processed && !note.isHolding) {
-                // If it's a long note already holding, we don't trigger "Hit" again on it (it's handled in update)
-                const diff = Math.abs(now - (note.spawnTime + note.duration));
-                if (diff < hitWindow && diff < minDiff) {
-                    minDiff = diff;
-                    foundNote = note;
+            if (note.targetIdx === targetIdx && !note.processed) {
+                const arrTime = note.spawnTime + note.duration;
+                const diff = Math.abs(now - arrTime);
+                if (diff < 150 && diff < minDiff) {
+                    minDiff = diff; found = note;
                 }
             }
         }
 
-        if (foundNote) {
-            let judgment = 'MISS';
-            if (minDiff < 50) judgment = 'PERFECT';
-            else if (minDiff < 100) judgment = 'GREAT';
-            else judgment = 'GOOD';
+        if (found) {
+            let j = 'MISS';
+            if (minDiff < 50) j = 'PERFECT';
+            else if (minDiff < 100) j = 'GREAT';
+            else j = 'GOOD';
 
-            if (foundNote.type === 'long') {
-                foundNote.isHolding = true;
-                this.showJudgment(judgment); // Show initial judgment
-                // Don't modify combo/score yet? 
-                // Standard: Add combo on start, then tick, then end.
-                // Simple: Add combo/score on start
-                this.applyJudgment(judgment, false); // false = don't reset combo on miss if handled elsewhere, but here it's fine.
-            } else {
-                foundNote.processed = true;
-                this.applyJudgment(judgment);
-            }
+            found.processed = true;
+            this.applyJudgment(j);
         }
     }
 
-    applyJudgment(judgment, countStats = true) {
-        this.showJudgment(judgment);
-
-        if (judgment === 'MISS') {
+    applyJudgment(j, countStats = true) {
+        this.showJudgment(j);
+        if (j === 'MISS') {
             this.combo = 0;
             if (countStats) this.stats.miss++;
         } else {
+            this.playTapSound();
             this.combo++;
             this.maxCombo = Math.max(this.combo, this.maxCombo);
-
-            let baseScore = 0;
-            if (judgment === 'PERFECT') {
-                baseScore = 1000;
-                if (countStats) this.stats.perfect++;
-            } else if (judgment === 'GREAT') {
-                baseScore = 750;
-                if (countStats) this.stats.great++;
-            } else { // GOOD
-                baseScore = 500;
-                if (countStats) this.stats.good++;
-            }
-            this.score += baseScore + this.combo * 10;
+            let score = 500;
+            if (j === 'PERFECT') { score = 1000; if (countStats) this.stats.perfect++; }
+            else if (j === 'GREAT') { score = 750; if (countStats) this.stats.great++; }
+            else { if (countStats) this.stats.good++; }
+            this.score += score + this.combo * 10;
         }
         this.updateHUD();
     }
 
-    renderLoop(time) {
-        const deltaTime = time - this.lastTime;
-        this.lastTime = time;
-
-        this.update(time);
-        this.draw();
-
-        requestAnimationFrame((t) => this.renderLoop(t));
+    updateHUD() {
+        // document.getElementById('score-val').innerText = String(this.score).padStart(7, '0');
+        document.getElementById('combo-val').innerText = this.combo;
+        document.querySelector('.combo-container').classList.toggle('visible', this.combo > 0);
     }
 
-    update(time) {
-        if (!this.isPlaying) return;
+    showJudgment(text) {
+        const el = document.getElementById('judgment-text');
+        el.innerText = text;
+        el.style.color = `var(--${text.toLowerCase()})`;
+        el.style.animation = 'none';
+        el.offsetHeight;
+        el.style.animation = null;
+    }
 
-        const now = time - this.startTime;
+    renderLoop(t) {
+        try {
+            this.update(t);
+            this.draw();
+            requestAnimationFrame(t => this.renderLoop(t));
+        } catch (e) {
+            this.log("Render: " + e.message);
+        }
+    }
 
-        // --- Audio Analysis Spawning ---
+    update(t) {
+        if (!this.isPlaying || this.isPaused) return;
+        const now = t - this.startTime;
+
         if (this.analyser) {
-            const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
-            this.analyser.getByteFrequencyData(dataArray);
-
-            let energy = 0;
-            for (let i = 0; i < 5; i++) energy += dataArray[i];
+            const data = new Uint8Array(this.analyser.frequencyBinCount);
+            this.analyser.getByteFrequencyData(data);
+            let energy = 0; for (let i = 0; i < 5; i++) energy += data[i];
             energy /= 5;
 
-            if (energy > this.beatThreshold && now - this.lastAnalysisTime > this.minBeatInterval) {
+            // Difficulty Thresholds
+            let thresh = 140;
+            let interval = 400;
+
+            if (this.difficulty === 'easy') { thresh = 160; interval = 600; }
+            if (this.difficulty === 'hard') { thresh = 110; interval = 250; }
+
+            const diff = energy - this.lastEnergy;
+            if (energy > thresh && diff > 5 && now - this.lastAnalysisTime > interval) {
                 this.spawnNote();
                 this.lastAnalysisTime = now;
             }
+            this.lastEnergy = energy;
         }
 
-        // --- Note Logic ---
         this.notes.forEach(note => {
             if (note.processed) return;
-
             const arrTime = note.spawnTime + note.duration;
-            const endTime = arrTime + (note.type === 'long' ? note.holdDuration : 0);
 
-            // 1. Check Miss (Passed without hit)
-            if (!note.isHolding) {
-                // Determine miss threshold. Normal: arrTime + window. Long: same for start.
-                if (now > arrTime + 150) {
-                    note.processed = true;
-                    this.applyJudgment('MISS');
-                }
-            }
-            // 2. Handle Long Note Holding
-            else if (note.type === 'long' && note.isHolding) {
-                // Must continue holding
-                if (!this.isTargetHeld(note.targetIdx)) {
-                    // Released early!
-                    note.processed = true;
-                    this.applyJudgment('MISS');
-                } else {
-                    // Check if reached end
-                    if (now >= endTime) {
-                        note.processed = true;
-                        this.applyJudgment('PERFECT'); // Completed hold
-                    } else {
-                        // Optional: Add score ticks while holding
-                        if (Math.random() < 0.1) this.score += 10;
-                    }
-                }
+            if (now > arrTime + 150) {
+                note.processed = true;
+                this.applyJudgment('MISS');
             }
         });
 
-        // Cleanup processed notes
-        this.notes = this.notes.filter(n => !n.processed || (performance.now() - this.startTime < n.spawnTime + n.duration + n.holdDuration + 1000));
+        this.notes = this.notes.filter(n => !n.processed || (now - (n.spawnTime + n.duration) < 1000));
 
-        // 終了判定
-        if (this.video.ended) {
-            this.endGame();
-        }
+        if (this.video.ended) this.endGame();
     }
 
     endGame() {
         this.isPlaying = false;
         this.video.pause();
         this.video.classList.remove('visible');
-
         document.getElementById('res-perfect').innerText = this.stats.perfect;
         document.getElementById('res-great').innerText = this.stats.great;
         document.getElementById('res-good').innerText = this.stats.good;
         document.getElementById('res-miss').innerText = this.stats.miss;
         document.getElementById('res-score').innerText = this.score;
-
         this.switchScreen('result');
     }
 
     draw() {
-        const { ctx, canvas } = this;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        try {
+            const { ctx, canvas } = this;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height * 0.2;
 
-        const centerX = canvas.width / 2;
-        const centerY = canvas.height * 0.2;
+            // Targets
+            this.targetPoints.forEach((pt, idx) => {
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 40, 0, Math.PI * 2);
+                ctx.strokeStyle = pt.color; ctx.lineWidth = 3; ctx.stroke();
 
-        // Background lines
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
-        ctx.lineWidth = 2;
-        this.targetPoints.forEach(pt => {
-            ctx.beginPath();
-            ctx.moveTo(centerX, centerY);
-            ctx.lineTo(pt.x, pt.y);
-            ctx.stroke();
-        });
-
-        // Targets
-        this.targetPoints.forEach((pt, idx) => {
-            ctx.beginPath();
-            ctx.arc(pt.x, pt.y, 40, 0, Math.PI * 2);
-            ctx.strokeStyle = pt.color;
-            ctx.lineWidth = 3;
-            ctx.stroke();
-
-            // Inner fill (highlight if held)
-            ctx.beginPath();
-            ctx.arc(pt.x, pt.y, 35, 0, Math.PI * 2);
-            if (this.isTargetHeld(idx)) {
-                ctx.fillStyle = pt.color + '88'; // Bright if held
-            } else {
-                ctx.fillStyle = pt.color + '33';
-            }
-            ctx.fill();
-        });
-
-        if (this.isPlaying) {
-            const now = performance.now() - this.startTime;
-
-            // Draw connecting lines for simultaneous notes
-            // Naive loop: find pairs with same spawn time
-            // To avoid double drawing, we can sort or just iterate carefully.
-            // But since N is small, n^2 check is fine.
-            ctx.lineWidth = 4;
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-            for (let i = 0; i < this.notes.length; i++) {
-                for (let j = i + 1; j < this.notes.length; j++) {
-                    const n1 = this.notes[i];
-                    const n2 = this.notes[j];
-                    // Only active notes
-                    if (n1.processed || n2.processed) continue;
-
-                    if (Math.abs(n1.spawnTime - n2.spawnTime) < 10) {
-                        // It's a pair! Calculate positions.
-                        const p1 = this.getNotePosition(n1, now, centerX, centerY);
-                        const p2 = this.getNotePosition(n2, now, centerX, centerY);
-                        if (p1 && p2) {
-                            ctx.beginPath();
-                            ctx.moveTo(p1.x, p1.y);
-                            ctx.lineTo(p2.x, p2.y);
-                            ctx.stroke();
-                        }
-                    }
-                }
-            }
-
-            // Draw Notes
-            // Draw Long Note Bodies first (so they are under heads)
-            this.notes.forEach(note => {
-                if (note.processed) return;
-
-                if (note.type === 'long') {
-                    this.drawLongNoteBody(ctx, note, now, centerX, centerY);
-                }
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 35, 0, Math.PI * 2);
+                ctx.fillStyle = this.isTargetHeld(idx) ? pt.color + '88' : pt.color + '33';
+                ctx.fill();
             });
 
-            // Draw Heads
-            this.notes.forEach(note => {
-                if (note.processed) return;
-                this.drawNoteHead(ctx, note, now, centerX, centerY);
-            });
+            if (this.isPlaying) {
+                const now = performance.now() - this.startTime;
+
+                // Draw Notes
+                this.notes.forEach(note => {
+                    if (note.processed) return;
+                    this.drawHead(note, now, centerX, centerY);
+                });
+            }
+        } catch (e) {
+            console.error("Draw error", e);
+            throw e;
         }
     }
 
-    getNotePosition(note, now, cx, cy) {
-        // Position based on current time relative to spawn->arrival
-        // arrival time = spawnTime + duration
-        // Note: For long note body, we need positions even if > 1.0
+    getNotePos(note, now, cx, cy) {
+        const elapsed = now - note.spawnTime;
+        const prog = elapsed / note.duration;
+        const target = this.targetPoints[note.targetIdx];
+        const x = cx + (target.x - cx) * prog;
+        const y = cy + (target.y - cy) * prog;
+        return { x, y, progress: prog, color: target.color };
+    }
+
+    drawHead(note, now, cx, cy) {
+        let pos;
+        const target = this.targetPoints[note.targetIdx];
+        pos = this.getNotePos(note, now, cx, cy);
 
         const elapsed = now - note.spawnTime;
-        const progress = elapsed / note.duration;
+        const prog = elapsed / note.duration;
+        if (prog > 1.2) return;
 
-        // Don't draw if too far away or behind
-        // if (progress < 0 || progress > 1.5) return null;
+        this.ctx.save(); // Save context state
+        this.ctx.beginPath();
+        this.ctx.arc(pos.x, pos.y, 30, 0, Math.PI * 2);
 
-        const target = this.targetPoints[note.targetIdx];
-        const x = cx + (target.x - cx) * progress;
-        const y = cy + (target.y - cy) * progress;
-        return { x, y, progress, color: target.color };
-    }
+        this.ctx.lineWidth = 5;
+        this.ctx.strokeStyle = pos.color;
 
-    drawNoteHead(ctx, note, now, cx, cy) {
-        // If holding, head should stick to target?
-        // Or just disappear? usually it stays at the target visualizing the hold start
+        // Glow Effect
+        this.ctx.shadowBlur = 20;
+        this.ctx.shadowColor = pos.color;
 
-        let pos;
-        if (note.isHolding) {
-            // Stick to target
-            const target = this.targetPoints[note.targetIdx];
-            pos = { x: target.x, y: target.y, color: target.color };
-        } else {
-            pos = this.getNotePosition(note, now, cx, cy);
-        }
+        this.ctx.stroke();
+        this.ctx.restore(); // Restore to remove glow for other elements if needed
 
-        if (!pos) return;
-        // Don't draw if not visible yet (progress < 0) or way passed
-        // But getNotePosition handles basic calc.
-
-        // Simple bounds check for visibility
-        if (pos.progress > 1.2 && !note.isHolding) return;
-
-        ctx.beginPath();
-        ctx.arc(pos.x, pos.y, 30, 0, Math.PI * 2);
-
-        // NO FILL for any notes
-
-        ctx.lineWidth = 5;
-        ctx.strokeStyle = pos.color;
-        ctx.stroke();
-
-        // Horizontal Bar for Simultaneous
         if (note.isSimultaneous) {
-            ctx.beginPath();
-            ctx.moveTo(pos.x - 20, pos.y);
-            ctx.lineTo(pos.x + 20, pos.y);
-            ctx.lineWidth = 5;
-            ctx.strokeStyle = pos.color;
-            ctx.stroke();
-        }
-    }
-
-    drawLongNoteBody(ctx, note, now, cx, cy) {
-        // Head position (or Target if holding)
-        let headPos;
-        const target = this.targetPoints[note.targetIdx];
-
-        if (note.isHolding) {
-            headPos = { x: target.x, y: target.y };
-        } else {
-            headPos = this.getNotePosition(note, now, cx, cy);
-        }
-
-        // Tail position
-        const elapsed = now - note.spawnTime; // Time since head spawn
-
-        const headProgress = note.isHolding ? 1.0 : (elapsed / note.duration);
-        const tailProgress = (elapsed - note.holdDuration) / note.duration;
-
-        const startP = Math.max(0, tailProgress);
-        const endP = Math.min(headProgress, 1.0); // Clamp to target if holding
-
-        if (startP >= endP) return; // Nothing to draw
-
-        // Calculate coordinates
-        const startX = cx + (target.x - cx) * startP;
-        const startY = cy + (target.y - cy) * startP;
-
-        const endX = cx + (target.x - cx) * endP;
-        const endY = cy + (target.y - cy) * endP;
-
-        // Draw Line (Body)
-        ctx.beginPath();
-        ctx.moveTo(startX, startY);
-        ctx.lineTo(endX, endY);
-        ctx.lineWidth = 20; // Thinner than head
-        ctx.strokeStyle = target.color + 'AA'; // Semi-transparent
-        ctx.lineCap = 'round';
-        ctx.stroke();
-
-        // Draw Tail Circle
-        if (tailProgress > 0 && tailProgress < 1.05) {
-            ctx.beginPath();
-            ctx.arc(startX, startY, 15, 0, Math.PI * 2);
-            ctx.fillStyle = target.color;
-            ctx.fill();
+            this.ctx.save();
+            this.ctx.beginPath();
+            this.ctx.moveTo(pos.x - 20, pos.y);
+            this.ctx.lineTo(pos.x + 20, pos.y);
+            this.ctx.lineWidth = 5;
+            this.ctx.strokeStyle = pos.color;
+            this.ctx.shadowBlur = 20;
+            this.ctx.shadowColor = pos.color;
+            this.ctx.stroke();
+            this.ctx.restore();
         }
     }
 }
-
-window.onload = () => {
-    window.game = new GameEngine();
-};
+window.onload = () => { window.game = new GameEngine(); };
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');

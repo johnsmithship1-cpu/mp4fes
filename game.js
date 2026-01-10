@@ -159,6 +159,15 @@ class GameEngine {
             this.switchScreen('menu');
         };
 
+        // Result Screen Buttons
+        document.getElementById('restart-btn').onclick = () => {
+            this.startGame(this.difficulty);
+        };
+        document.getElementById('quit-btn').onclick = () => {
+            // this.video.pause(); // already paused in endGame
+            this.switchScreen('menu');
+        };
+
         const upload = document.getElementById('video-upload');
         upload.onchange = (e) => {
             const file = e.target.files[0];
@@ -449,10 +458,10 @@ class GameEngine {
             // Difficulty Multipliers (Sensitivity)
             // Higher multiplier = requires stronger beat relative to average to trigger
             let sensitivity = 1.02;
-            let minInterval = 500; // ms
+            let minInterval = 250; // ms (Normal)
 
-            if (this.difficulty === 'easy') { sensitivity = 1.02; minInterval = 700; }
-            if (this.difficulty === 'hard') { sensitivity = 1.02; minInterval = 300; }
+            if (this.difficulty === 'easy') { sensitivity = 1.02; minInterval = 350; }
+            if (this.difficulty === 'hard') { sensitivity = 1.02; minInterval = 150; }
 
             // Detect onset: Current energy significantly higher than average
             // Also ensure some absolute minimum energy to avoid noise in silence

@@ -35,6 +35,8 @@ class GameEngine {
             this.lastAnalysisTime = 0;
             this.beatThreshold = 140;
             this.minBeatInterval = 400;
+            this.lastAnalysisTime = 0;
+            this.avgEnergy = 0;
             this.lastEnergy = 0;
 
             // Settings
@@ -215,6 +217,7 @@ class GameEngine {
 
         this.startTime = performance.now();
         this.lastAnalysisTime = 0;
+        this.avgEnergy = 0;
     }
 
     togglePause() {
@@ -239,7 +242,7 @@ class GameEngine {
         }
     }
 
-    spawnNote() {
+    spawnNote(intensity = 1.0) {
         if (this.isPaused) return;
         const spawnTime = performance.now() - this.startTime;
 
@@ -256,8 +259,13 @@ class GameEngine {
             return idx;
         };
 
-        // No long notes, only normal (80%) or simultaneous (20%)
-        if (rand < 0.2) {
+        // Probability of simultaneous notes increases with intensity
+        // intense beat (> 1.6x average) has higher chance of simultaneous
+        let simulChance = 0.1;
+        if (intensity > 1.6) simulChance = 0.4;
+        if (this.difficulty === 'easy') simulChance = 0.0; // No simul in easy? or very rare
+
+        if (rand < simulChance) {
             const t1 = getRandomTarget();
             const t2 = getRandomTarget([t1]);
             this.addNote(t1, spawnTime, duration, 'normal', 0, true);
@@ -431,16 +439,29 @@ class GameEngine {
             let energy = 0; for (let i = 0; i < 5; i++) energy += data[i];
             energy /= 5;
 
-            // Difficulty Thresholds
-            let thresh = 140;
-            let interval = 400;
+            // Dynamic Threshold Logic
+            // Update moving average
+            if (this.avgEnergy === 0) this.avgEnergy = energy;
+            else this.avgEnergy = this.avgEnergy * 0.95 + energy * 0.05;
 
-            if (this.difficulty === 'easy') { thresh = 160; interval = 600; }
-            if (this.difficulty === 'hard') { thresh = 110; interval = 250; }
+            // Difficulty Multipliers (Sensitivity)
+            // Higher multiplier = requires stronger beat relative to average to trigger
+            let sensitivity = 1.02;
+            let minInterval = 500; // ms
 
-            const diff = energy - this.lastEnergy;
-            if (energy > thresh && diff > 5 && now - this.lastAnalysisTime > interval) {
-                this.spawnNote();
+            if (this.difficulty === 'easy') { sensitivity = 1.02; minInterval = 700; }
+            if (this.difficulty === 'hard') { sensitivity = 1.02; minInterval = 300; }
+
+            // Detect onset: Current energy significantly higher than average
+            // Also ensure some absolute minimum energy to avoid noise in silence
+            const isBeat = energy > this.avgEnergy * sensitivity && energy > 20;
+            const isTime = now - this.lastAnalysisTime > minInterval;
+
+            if (isBeat && isTime) {
+                // Determine note density based on intensity
+                // If energy is VERY high (much higher than average), maybe spawn simultaneous?
+                const intensity = energy / this.avgEnergy;
+                this.spawnNote(intensity);
                 this.lastAnalysisTime = now;
             }
             this.lastEnergy = energy;

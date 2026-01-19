@@ -19,6 +19,7 @@ class GameEngine {
             this.startTime = 0;
             this.isPlaying = false;
             this.stats = { perfect: 0, great: 0, good: 0, miss: 0 };
+            this.effects = []; // Visual effects for hits
 
             // Audio
             this.audioCtx = null;
@@ -100,15 +101,8 @@ class GameEngine {
     }
 
     playTapSound() {
-        if (!this.audioCtx) return;
-        if (this.tapSoundAudio) {
-            try {
-                const audio = this.tapSoundAudio.cloneNode();
-                audio.volume = 1.0;
-                audio.play().catch(e => { });
-                return;
-            } catch (e) { }
-        }
+        // Sound disabled as per request
+        return;
     }
 
     resize() {
@@ -380,7 +374,7 @@ class GameEngine {
             if (note.targetIdx === targetIdx && !note.processed) {
                 const arrTime = note.spawnTime + note.duration;
                 const diff = Math.abs(now - arrTime);
-                if (diff < 150 && diff < minDiff) {
+                if (diff < 180 && diff < minDiff) {
                     minDiff = diff; found = note;
                 }
             }
@@ -388,11 +382,12 @@ class GameEngine {
 
         if (found) {
             let j = 'MISS';
-            if (minDiff < 50) j = 'PERFECT';
-            else if (minDiff < 100) j = 'GREAT';
+            if (minDiff < 60) j = 'PERFECT';
+            else if (minDiff < 120) j = 'GREAT';
             else j = 'GOOD';
 
             found.processed = true;
+            this.spawnHitEffect(targetIdx, j);
             this.applyJudgment(j);
         }
     }
@@ -482,7 +477,7 @@ class GameEngine {
             if (note.processed) return;
             const arrTime = note.spawnTime + note.duration;
 
-            if (now > arrTime + 150) {
+            if (now > arrTime + 180) {
                 note.processed = true;
                 this.applyJudgment('MISS');
             }
@@ -532,6 +527,8 @@ class GameEngine {
                     if (note.processed) return;
                     this.drawHead(note, now, centerX, centerY);
                 });
+
+                this.drawEffects();
             }
         } catch (e) {
             console.error("Draw error", e);
@@ -557,32 +554,78 @@ class GameEngine {
         const prog = elapsed / note.duration;
         if (prog > 1.2) return;
 
-        this.ctx.save(); // Save context state
+        // Enhanced Glow (Screen Blend + High Blur)
+        this.ctx.save();
+        this.ctx.globalCompositeOperation = 'screen';
+
         this.ctx.beginPath();
         this.ctx.arc(pos.x, pos.y, 30, 0, Math.PI * 2);
 
-        this.ctx.lineWidth = 5;
+        this.ctx.lineWidth = 8;
         this.ctx.strokeStyle = pos.color;
 
-        // Glow Effect
-        this.ctx.shadowBlur = 20;
+        this.ctx.shadowBlur = 50;
         this.ctx.shadowColor = pos.color;
 
         this.ctx.stroke();
-        this.ctx.restore(); // Restore to remove glow for other elements if needed
+        this.ctx.restore();
 
         if (note.isSimultaneous) {
             this.ctx.save();
+            this.ctx.globalCompositeOperation = 'screen';
             this.ctx.beginPath();
             this.ctx.moveTo(pos.x - 20, pos.y);
             this.ctx.lineTo(pos.x + 20, pos.y);
-            this.ctx.lineWidth = 5;
+            this.ctx.lineWidth = 8;
             this.ctx.strokeStyle = pos.color;
-            this.ctx.shadowBlur = 20;
+            this.ctx.shadowBlur = 50;
             this.ctx.shadowColor = pos.color;
             this.ctx.stroke();
             this.ctx.restore();
         }
+    }
+
+    spawnHitEffect(targetIdx, judgment) {
+        if (targetIdx < 0 || targetIdx >= this.targetPoints.length) return;
+        const target = this.targetPoints[targetIdx];
+        this.effects.push({
+            x: target.x,
+            y: target.y,
+            color: target.color,
+            startTime: performance.now() - this.startTime,
+            judgment: judgment
+        });
+    }
+
+    drawEffects() {
+        const now = performance.now() - this.startTime;
+        // Filter out old effects (500ms duration)
+        this.effects = this.effects.filter(fx => (now - fx.startTime) < 500);
+
+        this.ctx.save();
+        this.effects.forEach(fx => {
+            const progress = (now - fx.startTime) / 500;
+            // Easing: fast out, slow in
+            const ease = 1 - Math.pow(1 - progress, 3);
+            const alpha = 1 - progress;
+
+            // Expanding ring
+            this.ctx.beginPath();
+            this.ctx.arc(fx.x, fx.y, 40 + ease * 40, 0, Math.PI * 2);
+            this.ctx.strokeStyle = fx.color;
+            this.ctx.lineWidth = 10 * alpha;
+            this.ctx.globalAlpha = alpha;
+            this.ctx.stroke();
+
+            // Inner flash
+            if (progress < 0.3) {
+                this.ctx.beginPath();
+                this.ctx.arc(fx.x, fx.y, 40, 0, Math.PI * 2);
+                this.ctx.fillStyle = `rgba(255, 255, 255, ${0.5 * (1 - progress / 0.3)})`;
+                this.ctx.fill();
+            }
+        });
+        this.ctx.restore();
     }
 }
 window.onload = () => { window.game = new GameEngine(); };

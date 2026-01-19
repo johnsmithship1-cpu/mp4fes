@@ -589,7 +589,7 @@
                 <div id="menu-screen" class="screen active">
                     <h1 class="game-title">RHYTHM<br>STATION</h1>
                     <button id="start-btn" class="action-btn">GAME START</button>
-                    <div class="version-text">Ver1.0.2</div>
+                    <div class="version-text">Ver1.0.3</div>
                 </div>
 
                 <!-- Song Selection -->
@@ -624,18 +624,18 @@
                         <div class="setting-item" style="margin-bottom: 1rem;">
                             <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
                                 <label>NOTE SPEED</label>
-                                <span><span id="speed-display">1.5</span> sec</span>
+                                <span><span id="speed-display">1.0</span> sec</span>
                             </div>
-                            <input type="range" id="speed-input" min="0.5" max="2.0" step="0.1" value="1.5"
+                            <input type="range" id="speed-input" min="0.5" max="2.0" step="0.1" value="1.0"
                                 style="width: 100%; accent-color: var(--accent);"
                                 oninput="document.getElementById('speed-display').innerText = this.value">
                         </div>
                         <div class="setting-item" style="margin-bottom: 1.5rem;">
                             <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
                                 <label>MIN INTERVAL</label>
-                                <span><span id="interval-display">300</span> ms</span>
+                                <span><span id="interval-display">250</span> ms</span>
                             </div>
-                            <input type="range" id="interval-input" min="200" max="500" step="50" value="300"
+                            <input type="range" id="interval-input" min="50" max="350" step="50" value="250"
                                 style="width: 100%; accent-color: var(--accent);"
                                 oninput="document.getElementById('interval-display').innerText = this.value">
                         </div>

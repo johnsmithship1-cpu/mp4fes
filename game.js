@@ -47,6 +47,8 @@ class GameEngine {
             this.difficulty = 'normal';
             this.isPaused = false;
 
+            this.analysisData = null; // Stores totalNotes and maxScore
+
             this.init();
         } catch (e) { console.error(e); }
     }
@@ -173,6 +175,7 @@ class GameEngine {
                 document.getElementById('file-name').innerText = file.name;
                 this.video.src = URL.createObjectURL(file);
                 this.video.load();
+                this.analyzeAudio(file);
             }
         };
 
@@ -200,11 +203,19 @@ class GameEngine {
         document.getElementById('pause-screen').classList.remove('active');
     }
 
-    startGame() {
+    async startGame() {
         if (!this.currentFile) {
             alert("Please select an MP4 file first!");
             return;
         }
+
+        // Wait for analysis if in progress
+        if (!this.analysisData) {
+            document.getElementById('analysis-overlay').style.display = 'flex';
+            document.getElementById('analysis-status').innerText = "Waiting for analysis...";
+            if (!this.isAnalyzing) await this.analyzeAudio(this.currentFile);
+        }
+        document.getElementById('analysis-overlay').style.display = 'none';
 
         // Read settings
         this.noteDuration = parseFloat(document.getElementById('speed-input').value) * 1000;
@@ -219,23 +230,19 @@ class GameEngine {
         this.stats = { perfect: 0, great: 0, good: 0, miss: 0 };
         this.currentHP = this.maxHP;
 
-        // Dynamic Score Target Calculation
-        let duration = this.video.duration;
-        if (isNaN(duration) || duration === Infinity) duration = 180; // Fallback 3 mins
-
-        // Estimate N: duration / avg_interval
-        // Using minBeatInterval is theoretical max density. Real songs are sparser.
-        // Let's assume average interval is ~1.5x minBeatInterval? 
-        // Or simply reduce N by a factor like 0.7
-        const intervalSec = this.minBeatInterval / 1000;
-        const estimatedNotes = Math.floor((duration / intervalSec) * 0.6); // 60% density estimate
-
-        // Max Score = Base(1000*N) + Combo(10 * N*(N+1)/2)
-        // Set S Rank target slightly lower than theoretical Perfect (e.g. 95% of Perfect)
-        const maxScore = (estimatedNotes * 1000) + (10 * (estimatedNotes * (estimatedNotes + 1) / 2));
-        this.scoreTarget = Math.floor(maxScore * 0.9);
-
-        console.log(`Duration: ${duration}s, Est.Notes: ${estimatedNotes}, Target: ${this.scoreTarget}`);
+        // Use Pre-analyzed Score Target
+        if (this.analysisData) {
+            this.scoreTarget = this.analysisData.targetScore;
+            console.log(`Using Analyzed Target: ${this.scoreTarget} (Notes: ${this.analysisData.totalNotes})`);
+        } else {
+            // Fallback to dynamic estimate
+            let duration = this.video.duration;
+            if (isNaN(duration) || duration === Infinity) duration = 180;
+            const intervalSec = this.minBeatInterval / 1000;
+            const estimatedNotes = Math.floor((duration / intervalSec) * 0.6);
+            const maxScore = (estimatedNotes * 1000) + (10 * (estimatedNotes * (estimatedNotes + 1) / 2));
+            this.scoreTarget = Math.floor(maxScore * 0.9);
+        }
 
         this.activeTouches.clear();
         this.isPaused = false;
@@ -250,6 +257,85 @@ class GameEngine {
         this.startTime = performance.now();
         this.lastAnalysisTime = 0;
         this.avgEnergy = 0;
+    }
+
+    async analyzeAudio(file) {
+        if (this.isAnalyzing) return;
+        this.isAnalyzing = true;
+        this.analysisData = null;
+        const overlay = document.getElementById('analysis-overlay');
+        const status = document.getElementById('analysis-status');
+        overlay.style.display = 'flex';
+        status.innerText = "Decoding audio...";
+
+        try {
+            const context = this.audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+            const arrayBuffer = await file.arrayBuffer();
+            const audioBuffer = await context.decodeAudioData(arrayBuffer);
+
+            status.innerText = "Analyzing rhythm...";
+            const data = audioBuffer.getChannelData(0);
+            const sampleRate = audioBuffer.sampleRate;
+
+            // Simulation Parameters (must match update() loop)
+            const sensitivity = 1.02;
+            const minInterval = parseInt(document.getElementById('interval-input').value);
+            const noteDuration = parseFloat(document.getElementById('speed-input').value) * 1000;
+
+            let totalNotes = 0;
+            let avgEnergy = 0;
+            let lastAnalysisTime = 0;
+
+            // process in segment chunks (roughly matching FFT slice rate)
+            const chunkSize = Math.floor(sampleRate * 0.02);
+
+            for (let i = 0; i < data.length; i += chunkSize) {
+                const now = (i / sampleRate) * 1000;
+
+                // RMS calculation
+                let sum = 0;
+                let count = 0;
+                for (let j = 0; j < chunkSize && (i + j) < data.length; j++) {
+                    sum += data[i + j] * data[i + j];
+                    count++;
+                }
+                let energy = Math.sqrt(sum / count) * 255 * 1.5; // Adjusted scaling for RMS vs FFT
+
+                if (avgEnergy === 0) avgEnergy = energy;
+                else avgEnergy = avgEnergy * 0.95 + energy * 0.05;
+
+                const isBeat = energy > avgEnergy * sensitivity && energy > 18;
+                const isTime = now - lastAnalysisTime > minInterval;
+                const remainingTime = (audioBuffer.duration * 1000) - now;
+                const canSpawn = remainingTime > (noteDuration + 500);
+
+                if (isBeat && isTime && canSpawn) {
+                    totalNotes++;
+                    lastAnalysisTime = now;
+                }
+            }
+
+            const baseScore = totalNotes * 1000;
+            const comboBonus = 10 * (totalNotes * (totalNotes + 1) / 2);
+            const perfectScore = baseScore + comboBonus;
+
+            // Calibration: Rank thresholds
+            this.analysisData = {
+                totalNotes: totalNotes,
+                perfectScore: perfectScore,
+                targetScore: perfectScore // Now 100% for progress gauge
+            };
+
+            status.innerText = `Ready: ${totalNotes} notes detected`;
+            setTimeout(() => { if (!this.isPlaying) overlay.style.display = 'none'; }, 1000);
+
+        } catch (e) {
+            console.error("Analysis error", e);
+            status.innerText = "Analysis failed.";
+            setTimeout(() => { if (!this.isPlaying) overlay.style.display = 'none'; }, 2000);
+        } finally {
+            this.isAnalyzing = false;
+        }
     }
 
     togglePause() {
@@ -454,11 +540,14 @@ class GameEngine {
     }
 
     updateHUD() {
-        // Update Score Gauge (Target 500,000 for S)
-        const scorePct = Math.min(100, (this.score / this.scoreTarget) * 100);
+        // Update Score Gauge
+        const target = (this.analysisData && this.analysisData.perfectScore) ? this.analysisData.perfectScore : this.scoreTarget;
+        const scorePct = Math.min(100, (this.score / target) * 100);
         const fill = document.getElementById('score-bar-fill');
         fill.style.width = `${scorePct}%`;
-        fill.classList.toggle('rainbow', this.score >= this.scoreTarget);
+
+        // Rainbow effect at 90% (generous)
+        fill.classList.toggle('rainbow', scorePct >= 90);
 
         document.getElementById('score-val').innerText = this.score;
 
@@ -554,11 +643,13 @@ class GameEngine {
         document.getElementById('res-score').innerText = this.score;
 
         // Rank Calculation
-        // scoreTarget is the S threshold
+        const target = (this.analysisData && this.analysisData.perfectScore) ? this.analysisData.perfectScore : 500000;
+        const ratio = this.score / target;
+
         let rank = 'C';
-        if (this.score >= this.scoreTarget) rank = 'S';
-        else if (this.score >= this.scoreTarget * 0.8) rank = 'A';
-        else if (this.score >= this.scoreTarget * 0.6) rank = 'B';
+        if (ratio >= 0.90) rank = 'S';
+        else if (ratio >= 0.75) rank = 'A';
+        else if (ratio >= 0.55) rank = 'B';
 
         const rankEl = document.getElementById('res-rank');
         rankEl.innerText = rank;

@@ -218,7 +218,25 @@ class GameEngine {
         this.notes = [];
         this.stats = { perfect: 0, great: 0, good: 0, miss: 0 };
         this.currentHP = this.maxHP;
-        this.scoreTarget = 500000; // S Rank Score
+
+        // Dynamic Score Target Calculation
+        let duration = this.video.duration;
+        if (isNaN(duration) || duration === Infinity) duration = 180; // Fallback 3 mins
+
+        // Estimate N: duration / avg_interval
+        // Using minBeatInterval is theoretical max density. Real songs are sparser.
+        // Let's assume average interval is ~1.5x minBeatInterval? 
+        // Or simply reduce N by a factor like 0.7
+        const intervalSec = this.minBeatInterval / 1000;
+        const estimatedNotes = Math.floor((duration / intervalSec) * 0.6); // 60% density estimate
+
+        // Max Score = Base(1000*N) + Combo(10 * N*(N+1)/2)
+        // Set S Rank target slightly lower than theoretical Perfect (e.g. 95% of Perfect)
+        const maxScore = (estimatedNotes * 1000) + (10 * (estimatedNotes * (estimatedNotes + 1) / 2));
+        this.scoreTarget = Math.floor(maxScore * 0.9);
+
+        console.log(`Duration: ${duration}s, Est.Notes: ${estimatedNotes}, Target: ${this.scoreTarget}`);
+
         this.activeTouches.clear();
         this.isPaused = false;
         this.updateHUD();
@@ -438,7 +456,10 @@ class GameEngine {
     updateHUD() {
         // Update Score Gauge (Target 500,000 for S)
         const scorePct = Math.min(100, (this.score / this.scoreTarget) * 100);
-        document.getElementById('score-bar-fill').style.width = `${scorePct}%`;
+        const fill = document.getElementById('score-bar-fill');
+        fill.style.width = `${scorePct}%`;
+        fill.classList.toggle('rainbow', this.score >= this.scoreTarget);
+
         document.getElementById('score-val').innerText = this.score;
 
         document.getElementById('combo-val').innerText = this.combo;
@@ -491,7 +512,12 @@ class GameEngine {
             const isBeat = energy > this.avgEnergy * sensitivity && energy > 20;
             const isTime = now - this.lastAnalysisTime > minInterval;
 
-            if (isBeat && isTime) {
+            // Check if there is enough time for the note to reach target before video ends
+            // Buffered by 500ms so notes don't spawn right at the wire
+            const remainingTime = (this.video.duration * 1000) - now;
+            const canSpawn = remainingTime > (this.noteDuration + 500);
+
+            if (isBeat && isTime && canSpawn) {
                 // Determine note density based on intensity
                 // If energy is VERY high (much higher than average), maybe spawn simultaneous?
                 const intensity = energy / this.avgEnergy;
@@ -524,7 +550,21 @@ class GameEngine {
         document.getElementById('res-great').innerText = this.stats.great;
         document.getElementById('res-good').innerText = this.stats.good;
         document.getElementById('res-miss').innerText = this.stats.miss;
+        document.getElementById('res-max-combo').innerText = this.maxCombo;
         document.getElementById('res-score').innerText = this.score;
+
+        // Rank Calculation
+        // scoreTarget is the S threshold
+        let rank = 'C';
+        if (this.score >= this.scoreTarget) rank = 'S';
+        else if (this.score >= this.scoreTarget * 0.8) rank = 'A';
+        else if (this.score >= this.scoreTarget * 0.6) rank = 'B';
+
+        const rankEl = document.getElementById('res-rank');
+        rankEl.innerText = rank;
+        rankEl.style.color = (rank === 'S') ? '#FFD700' : (rank === 'A') ? '#E91E63' : (rank === 'B') ? '#2196F3' : '#9E9E9E';
+        rankEl.style.textShadow = `0 0 30px ${rankEl.style.color}`;
+
         this.switchScreen('result');
     }
 

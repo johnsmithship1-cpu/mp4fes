@@ -19,7 +19,10 @@ class GameEngine {
             this.startTime = 0;
             this.isPlaying = false;
             this.stats = { perfect: 0, great: 0, good: 0, miss: 0 };
+            this.maxHP = 100;
+            this.currentHP = 100;
             this.effects = []; // Visual effects for hits
+            this.particles = []; // Particle effects
 
             // Audio
             this.audioCtx = null;
@@ -117,7 +120,7 @@ class GameEngine {
         const centerX = this.canvas.width / 2;
         const centerY = this.canvas.height * 0.2;
         const radius = Math.min(this.canvas.width, this.canvas.height) * 0.7;
-        const colors = ['#2196F3', '#9C27B0', '#F44336', '#E91E63', '#FFEB3B', '#4CAF50'];
+        const colors = ['#2196F3', '#9C27B0', '#FF0000', '#E91E63', '#FFEB3B', '#4CAF50'];
         const startAngle = Math.PI + 0.2;
         const endAngle = Math.PI * 2 - 0.2;
         for (let i = 0; i < this.numTargets; i++) {
@@ -145,7 +148,7 @@ class GameEngine {
         document.getElementById('resume-btn').onclick = () => this.togglePause();
         document.getElementById('pause-retry-btn').onclick = () => {
             this.togglePause(); // Unpause logic to reset state properly
-            this.startGame(this.difficulty);
+            this.startGame();
         };
         document.getElementById('pause-menu-btn').onclick = () => {
             this.togglePause();
@@ -155,7 +158,7 @@ class GameEngine {
 
         // Result Screen Buttons
         document.getElementById('restart-btn').onclick = () => {
-            this.startGame(this.difficulty);
+            this.startGame();
         };
         document.getElementById('quit-btn').onclick = () => {
             // this.video.pause(); // already paused in endGame
@@ -197,19 +200,25 @@ class GameEngine {
         document.getElementById('pause-screen').classList.remove('active');
     }
 
-    startGame(difficulty = 'normal') {
+    startGame() {
         if (!this.currentFile) {
             alert("Please select an MP4 file first!");
             return;
         }
-        this.difficulty = difficulty;
-        this.log(`Start Game: ${difficulty}`);
+
+        // Read settings
+        this.noteDuration = parseFloat(document.getElementById('speed-input').value) * 1000;
+        this.minBeatInterval = parseInt(document.getElementById('interval-input').value);
+
+        this.log(`Start Game: Speed=${this.noteDuration}ms, Interval=${this.minBeatInterval}ms`);
 
         this.initAudio();
         if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
         this.score = 0; this.combo = 0; this.maxCombo = 0;
         this.notes = [];
         this.stats = { perfect: 0, great: 0, good: 0, miss: 0 };
+        this.currentHP = this.maxHP;
+        this.scoreTarget = 500000; // S Rank Score
         this.activeTouches.clear();
         this.isPaused = false;
         this.updateHUD();
@@ -252,9 +261,7 @@ class GameEngine {
         const spawnTime = performance.now() - this.startTime;
 
         // Difficulty Settings
-        let duration = 1500;
-        if (this.difficulty === 'easy') duration = 2000;
-        if (this.difficulty === 'hard') duration = 1000;
+        const duration = this.noteDuration;
 
         const rand = Math.random();
 
@@ -268,7 +275,6 @@ class GameEngine {
         // intense beat (> 1.6x average) has higher chance of simultaneous
         let simulChance = 0.1;
         if (intensity > 1.6) simulChance = 0.4;
-        if (this.difficulty === 'easy') simulChance = 0.0; // No simul in easy? or very rare
 
         if (rand < simulChance) {
             const t1 = getRandomTarget();
@@ -394,24 +400,47 @@ class GameEngine {
 
     applyJudgment(j, countStats = true) {
         this.showJudgment(j);
+
+        let hpChange = 0;
+
         if (j === 'MISS') {
             this.combo = 0;
             if (countStats) this.stats.miss++;
+            hpChange = -10;
         } else {
             this.playTapSound();
             this.combo++;
             this.maxCombo = Math.max(this.combo, this.maxCombo);
             let score = 500;
-            if (j === 'PERFECT') { score = 1000; if (countStats) this.stats.perfect++; }
-            else if (j === 'GREAT') { score = 750; if (countStats) this.stats.great++; }
-            else { if (countStats) this.stats.good++; }
+            if (j === 'PERFECT') {
+                score = 1000;
+                if (countStats) this.stats.perfect++;
+                hpChange = 1; // Slight heal
+            }
+            else if (j === 'GREAT') {
+                score = 750;
+                if (countStats) this.stats.great++;
+                hpChange = 0;
+            }
+            else {
+                if (countStats) this.stats.good++;
+                hpChange = -2;
+            }
             this.score += score + this.combo * 10;
         }
+
+        this.currentHP = Math.min(this.maxHP, Math.max(0, this.currentHP + hpChange));
+        // if (this.currentHP <= 0) this.endGame(); // Optional: Fail condition
+
         this.updateHUD();
     }
 
     updateHUD() {
-        // document.getElementById('score-val').innerText = String(this.score).padStart(7, '0');
+        // Update Score Gauge (Target 500,000 for S)
+        const scorePct = Math.min(100, (this.score / this.scoreTarget) * 100);
+        document.getElementById('score-bar-fill').style.width = `${scorePct}%`;
+        document.getElementById('score-val').innerText = this.score;
+
         document.getElementById('combo-val').innerText = this.combo;
         document.querySelector('.combo-container').classList.toggle('visible', this.combo > 0);
     }
@@ -445,6 +474,8 @@ class GameEngine {
             let energy = 0; for (let i = 0; i < 5; i++) energy += data[i];
             energy /= 5;
 
+
+
             // Dynamic Threshold Logic
             // Update moving average
             if (this.avgEnergy === 0) this.avgEnergy = energy;
@@ -453,10 +484,7 @@ class GameEngine {
             // Difficulty Multipliers (Sensitivity)
             // Higher multiplier = requires stronger beat relative to average to trigger
             let sensitivity = 1.02;
-            let minInterval = 250; // ms (Normal)
-
-            if (this.difficulty === 'easy') { sensitivity = 1.02; minInterval = 350; }
-            if (this.difficulty === 'hard') { sensitivity = 1.02; minInterval = 150; }
+            let minInterval = this.minBeatInterval;
 
             // Detect onset: Current energy significantly higher than average
             // Also ensure some absolute minimum energy to avoid noise in silence
@@ -522,6 +550,49 @@ class GameEngine {
             if (this.isPlaying) {
                 const now = performance.now() - this.startTime;
 
+                // Group simultaneous notes
+                const simulGroups = {};
+                this.notes.forEach(note => {
+                    if (!note.processed && note.isSimultaneous) {
+                        const key = note.spawnTime.toFixed(2);
+                        if (!simulGroups[key]) simulGroups[key] = [];
+                        simulGroups[key].push(note);
+                    }
+                });
+
+                // Draw Connections (Arcs)
+                Object.values(simulGroups).forEach(group => {
+                    if (group.length >= 2) {
+                        const n1 = group[0];
+                        const n2 = group[1];
+                        const pos1 = this.getNotePos(n1, now, centerX, centerY);
+                        const pos2 = this.getNotePos(n2, now, centerX, centerY);
+
+                        const r = Math.sqrt((pos1.x - centerX) ** 2 + (pos1.y - centerY) ** 2);
+                        const ang1 = Math.atan2(pos1.y - centerY, pos1.x - centerX);
+                        const ang2 = Math.atan2(pos2.y - centerY, pos2.x - centerX);
+
+                        const startAng = Math.min(ang1, ang2);
+                        const endAng = Math.max(ang1, ang2);
+
+                        ctx.save();
+                        // Gradient stroke
+                        const grad = ctx.createLinearGradient(pos1.x, pos1.y, pos2.x, pos2.y);
+                        grad.addColorStop(0, pos1.color);
+                        grad.addColorStop(1, pos2.color);
+
+                        ctx.beginPath();
+                        ctx.arc(centerX, centerY, r, startAng, endAng);
+                        ctx.lineWidth = 8;
+                        ctx.strokeStyle = grad;
+                        ctx.globalAlpha = 0.6;
+                        ctx.shadowBlur = 10;
+                        ctx.shadowColor = 'white';
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+                });
+
                 // Draw Notes
                 this.notes.forEach(note => {
                     if (note.processed) return;
@@ -529,6 +600,7 @@ class GameEngine {
                 });
 
                 this.drawEffects();
+                this.drawParticles();
             }
         } catch (e) {
             console.error("Draw error", e);
@@ -583,6 +655,8 @@ class GameEngine {
             this.ctx.stroke();
             this.ctx.restore();
         }
+
+
     }
 
     spawnHitEffect(targetIdx, judgment) {
@@ -595,6 +669,62 @@ class GameEngine {
             startTime: performance.now() - this.startTime,
             judgment: judgment
         });
+        this.spawnParticles(targetIdx, judgment);
+    }
+
+    spawnParticles(targetIdx, judgment) {
+        if (targetIdx < 0 || targetIdx >= this.targetPoints.length) return;
+        const target = this.targetPoints[targetIdx];
+
+        let count = 0;
+        let speed = 2; // base speed
+
+        if (judgment === 'PERFECT') { count = 20; speed = 6; }
+        else if (judgment === 'GREAT') { count = 12; speed = 4; }
+        else if (judgment === 'GOOD') { count = 5; speed = 2; }
+
+        for (let i = 0; i < count; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const spd = Math.random() * speed + 2;
+            this.particles.push({
+                x: target.x,
+                y: target.y,
+                vx: Math.cos(angle) * spd,
+                vy: Math.sin(angle) * spd,
+                color: target.color,
+                life: 1.0,
+                decay: 0.02 + Math.random() * 0.03,
+                size: Math.random() * 4 + 2
+            });
+        }
+    }
+
+    drawParticles() {
+        if (this.particles.length === 0) return;
+
+        this.ctx.save();
+        this.ctx.globalCompositeOperation = 'screen'; // Make them glow/add
+
+        // Update and filter
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            let p = this.particles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            p.life -= p.decay;
+
+            if (p.life <= 0) {
+                this.particles.splice(i, 1);
+                continue;
+            }
+
+            this.ctx.beginPath();
+            this.ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+            this.ctx.fillStyle = p.color;
+            this.ctx.globalAlpha = p.life;
+            this.ctx.fill();
+        }
+
+        this.ctx.restore();
     }
 
     drawEffects() {

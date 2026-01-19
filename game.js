@@ -603,8 +603,8 @@ class GameEngine {
         const fill = document.getElementById('score-bar-fill');
         fill.style.width = `${scorePct}%`;
 
-        // Rainbow effect at 90% (generous)
-        fill.classList.toggle('rainbow', scorePct >= 90);
+        // Rainbow effect at 80% (S Rank)
+        fill.classList.toggle('rainbow', scorePct >= 80);
 
         document.getElementById('score-val').innerText = this.score;
 
@@ -676,14 +676,22 @@ class GameEngine {
         const ratio = this.score / target;
 
         let rank = 'C';
-        if (ratio >= 0.90) rank = 'S';
-        else if (ratio >= 0.75) rank = 'A';
-        else if (ratio >= 0.55) rank = 'B';
+        if (ratio >= 0.90) rank = 'SS';
+        else if (ratio >= 0.80) rank = 'S';
+        else if (ratio >= 0.70) rank = 'A';
+        else if (ratio >= 0.60) rank = 'B';
 
         const rankEl = document.getElementById('res-rank');
         rankEl.innerText = rank;
-        rankEl.style.color = (rank === 'S') ? '#FFD700' : (rank === 'A') ? '#E91E63' : (rank === 'B') ? '#2196F3' : '#9E9E9E';
-        rankEl.style.textShadow = `0 0 30px ${rankEl.style.color}`;
+
+        let rankColor = '#9E9E9E';
+        if (rank === 'SS') rankColor = '#00f2ff'; // Cyan-Glow
+        else if (rank === 'S') rankColor = '#FFD700'; // Gold
+        else if (rank === 'A') rankColor = '#E91E63'; // Pink
+        else if (rank === 'B') rankColor = '#2196F3'; // Blue
+
+        rankEl.style.color = rankColor;
+        rankEl.style.textShadow = `0 0 30px ${rankColor}`;
 
         this.switchScreen('result');
     }

@@ -23,6 +23,7 @@ class GameEngine {
             this.currentHP = 100;
             this.effects = []; // Visual effects for hits
             this.particles = []; // Particle effects
+            this.spawnedNoteCount = 0; // DEBUG: track actual spawned notes
 
             // Audio
             this.audioCtx = null;
@@ -234,6 +235,7 @@ class GameEngine {
         if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
         this.score = 0; this.combo = 0; this.maxCombo = 0;
         this.notes = [];
+        this.spawnedNoteCount = 0;
         this.stats = { perfect: 0, great: 0, good: 0, miss: 0 };
         this.currentHP = this.maxHP;
 
@@ -299,23 +301,26 @@ class GameEngine {
             for (let i = 0; i < data.length; i += chunkSize) {
                 const now = (i / sampleRate) * 1000;
 
-                // Simplified Energy calculation (Sum of Absolute Values)
-                // This better approximates the bass-bin average in real-time
+                // Bass-biased Energy calculation (Low Pass Filter)
+                // This better mimics FFT bass bins used in update()
                 let sum = 0;
                 let count = 0;
+                let lpf = 0;
+                const filterAlpha = 0.15; // Rough 800Hz-ish proxy
                 for (let j = 0; j < chunkSize && (i + j) < data.length; j++) {
-                    sum += Math.abs(data[i + j]);
+                    const sample = data[i + j];
+                    lpf = filterAlpha * sample + (1 - filterAlpha) * lpf; // EMA LPF
+                    sum += Math.abs(lpf);
                     count++;
                 }
-                let energy = (sum / count) * 255 * 3.0; // Scaled to match game's bass-average range
+                let energy = (sum / count) * 255 * 6.5; // Re-calibrated scale
 
                 if (avgEnergy === 0) avgEnergy = energy;
                 else avgEnergy = avgEnergy * 0.95 + energy * 0.05;
 
-                const isBeat = energy > avgEnergy * sensitivity && energy > 20; // Exact match to update()
+                const isBeat = energy > avgEnergy * sensitivity && energy > 20; // 100% match to update()
                 const isTime = now - lastAnalysisTime > minInterval;
-                const remainingTime = (audioBuffer.duration * 1000) - now;
-                const canSpawn = remainingTime > (noteDuration + 500);
+                const canSpawn = (audioBuffer.duration * 1000) - now > (noteDuration + 500);
 
                 if (isBeat && isTime && canSpawn) {
                     const intensity = energy / avgEnergy;
@@ -377,7 +382,7 @@ class GameEngine {
 
     spawnNote(intensity = 1.0) {
         if (this.isPaused) return;
-        const now = performance.now() - this.startTime;
+        const now = this.video.currentTime * 1000;
 
         const getRandomTarget = (exclude = []) => {
             let idx;
@@ -397,9 +402,11 @@ class GameEngine {
             const t2 = getRandomTarget([t1]);
             this.addNote(t1, now, this.noteDuration, 'normal', 0, true);
             this.addNote(t2, now, this.noteDuration, 'normal', 0, true);
+            this.spawnedNoteCount += 2;
         } else {
             const t = getRandomTarget();
             this.addNote(t, now, this.noteDuration, 'normal');
+            this.spawnedNoteCount++;
         }
     }
 
@@ -588,7 +595,7 @@ class GameEngine {
 
     update(t) {
         if (!this.isPlaying || this.isPaused) return;
-        const now = t - this.startTime;
+        const now = this.video.currentTime * 1000;
 
         if (this.analyser) {
             const data = new Uint8Array(this.analyser.frequencyBinCount);
@@ -653,6 +660,8 @@ class GameEngine {
         document.getElementById('res-miss').innerText = this.stats.miss;
         document.getElementById('res-max-combo').innerText = this.maxCombo;
         document.getElementById('res-score').innerText = this.score;
+
+        console.log(`[DEBUG] Final Spawned: ${this.spawnedNoteCount} (Analyzed: ${this.analysisData ? this.analysisData.totalNotes : 'N/A'})`);
 
         // Rank Calculation
         const target = (this.analysisData && this.analysisData.perfectScore) ? this.analysisData.perfectScore : 500000;

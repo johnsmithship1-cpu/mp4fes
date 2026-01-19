@@ -39,7 +39,7 @@ class GameEngine {
             // Analysis
             this.lastAnalysisTime = 0;
             this.beatThreshold = 140;
-            this.minBeatInterval = 300;
+            this.minBeatInterval = 250;
             this.lastAnalysisTime = 0;
             this.avgEnergy = 0;
             this.lastEnergy = 0;
@@ -75,7 +75,7 @@ class GameEngine {
             this.audioCtx = new AudioContext();
             this.analyser = this.audioCtx.createAnalyser();
             this.analyser.fftSize = 256;
-            this.analyser.smoothingTimeConstant = 0; // Instant response for better sync
+            this.analyser.smoothingTimeConstant = 0.8; // Match restoration point (default)
             this.video.crossOrigin = "anonymous";
             this.source = this.audioCtx.createMediaElementSource(this.video);
 
@@ -261,6 +261,14 @@ class GameEngine {
         this.avgEnergy = 0;
         this.lastAnalysisTime = 0;
 
+        // Initialize Chart for playback
+        if (this.analysisData && this.analysisData.noteChart) {
+            this.currentChart = [...this.analysisData.noteChart];
+            console.log(`Chart Loaded: ${this.currentChart.length} beats`);
+        } else {
+            this.currentChart = [];
+        }
+
         this.updateHUD();
         this.switchScreen('playing');
 
@@ -299,7 +307,7 @@ class GameEngine {
             source.buffer = audioBuffer;
             const analyser = offlineCtx.createAnalyser();
             analyser.fftSize = 256;
-            analyser.smoothingTimeConstant = 0;
+            analyser.smoothingTimeConstant = 0.8; // Match restoration point (default)
             const gainNode = offlineCtx.createGain();
             gainNode.gain.value = 0.5;
             source.connect(gainNode);
@@ -309,27 +317,30 @@ class GameEngine {
             const minInterval = parseInt(document.getElementById('interval-input').value);
             const noteDuration = parseFloat(document.getElementById('speed-input').value) * 1000;
 
-            let totalNotes = 0;
+            let noteChart = [];
             this.avgEnergy = 0;
             this.lastAnalysisTime = -minInterval;
             const freqData = new Uint8Array(analyser.frequencyBinCount);
 
             source.start(0);
 
-            const step = 0.005; // 5ms sampling
+            const step = 0.0166; // 60fps sampling (matches restoration point)
             for (let t = 0; t < audioBuffer.duration; t += step) {
                 offlineCtx.suspend(t).then(() => {
                     analyser.getByteFrequencyData(freqData);
                     let energy = (freqData[0] + freqData[1] + freqData[2] + freqData[3] + freqData[4]) / 5;
 
-                    const result = this.handleBeatDetection(t * 1000, energy, audioBuffer.duration, minInterval, noteDuration);
-                    if (result > 0) totalNotes += result;
+                    const beat = this.handleBeatDetection(t * 1000, energy, audioBuffer.duration, minInterval, noteDuration);
+                    if (beat) noteChart.push(beat);
 
                     offlineCtx.resume();
                 });
             }
 
             await offlineCtx.startRendering();
+
+            // Total notes calculation (accounting for simultaneous)
+            const totalNotes = noteChart.reduce((acc, b) => acc + (b.isSimul ? 2 : 1), 0);
 
             const baseScore = totalNotes * 1000;
             const comboBonus = 10 * (totalNotes * (totalNotes + 1) / 2);
@@ -338,7 +349,8 @@ class GameEngine {
             this.analysisData = {
                 totalNotes: totalNotes,
                 perfectScore: perfectScore,
-                targetScore: perfectScore
+                targetScore: perfectScore,
+                noteChart: noteChart
             };
 
             status.innerText = `Ready: ${totalNotes} notes detected`;
@@ -357,8 +369,8 @@ class GameEngine {
         if (this.avgEnergy === 0) this.avgEnergy = energy;
         else this.avgEnergy = this.avgEnergy * 0.95 + energy * 0.05;
 
-        const sensitivity = 1.02;
-        const isBeat = energy > this.avgEnergy * sensitivity && energy > 20;
+        const sensitivity = 1.02; // Restored to 1.02
+        const isBeat = energy > this.avgEnergy * sensitivity && energy > 20; // Restored to 20
         const isTime = now - this.lastAnalysisTime > minInterval;
         const remainingTime = (totalDuration * 1000) - now;
         const canSpawn = remainingTime > (noteDuration + 500);
@@ -372,13 +384,14 @@ class GameEngine {
             const isSimul = (Math.floor(now * 10) % 100) < simulChance;
 
             if (this.isAnalyzing) {
-                return isSimul ? 2 : 1;
+                return { time: now, intensity, isSimul };
             } else {
+                // This branch is now legacy since we use charts, but kept as fallback
                 this.spawnNote(intensity, isSimul);
-                return 0;
+                return null;
             }
         }
-        return 0;
+        return null;
     }
 
     togglePause() {
@@ -622,13 +635,12 @@ class GameEngine {
         if (!this.isPlaying || this.isPaused) return;
         const now = this.video.currentTime * 1000;
 
-        if (this.analyser) {
-            const data = new Uint8Array(this.analyser.frequencyBinCount);
-            this.analyser.getByteFrequencyData(data);
-            let energy = (data[0] + data[1] + data[2] + data[3] + data[4]) / 5;
-
-            this.handleBeatDetection(now, energy, this.video.duration, this.minBeatInterval, this.noteDuration);
-            this.lastEnergy = energy;
+        if (this.currentChart && this.currentChart.length > 0) {
+            // Spawn any notes that are due according to the chart
+            while (this.currentChart.length > 0 && now >= this.currentChart[0].time) {
+                const beat = this.currentChart.shift();
+                this.spawnNote(beat.intensity, beat.isSimul);
+            }
         }
 
         this.notes.forEach(note => {

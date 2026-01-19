@@ -123,10 +123,11 @@
         }
 
         #result-screen {
-            height: 80%;
-            top: 10%;
-            border-radius: 20px;
-            box-shadow: 0 0 50px rgba(0, 0, 0, 0.8);
+            height: 100%;
+            top: 0;
+            border-radius: 0;
+            background: #0f0c29;
+            /* Opaque background */
         }
 
         #hud {
@@ -282,14 +283,21 @@
         .result-stats {
             width: 80%;
             max-width: 400px;
-            margin-bottom: 2rem;
+            margin-bottom: 1rem;
+            /* Reduced margin */
             font-family: var(--font-display);
+            flex-grow: 1;
+            /* Allow growing */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
         }
 
         .stat-item {
             display: flex;
             justify-content: space-between;
-            padding: 0.5rem 0;
+            padding: 0.2rem 0;
+            /* Reduced padding */
             border-bottom: 1px solid rgba(255, 255, 255, 0.1);
             font-size: 1.2rem;
         }
@@ -297,13 +305,60 @@
         .stat-total {
             display: flex;
             justify-content: space-between;
-            padding: 1rem 0;
+            padding: 0.5rem 0;
             font-size: 1.8rem;
             font-weight: bold;
             color: var(--accent);
             text-shadow: 0 0 10px var(--accent-glow);
-            margin-top: 1rem;
-            border-top: 2px solid var(--accent);
+            margin-top: 0.5rem;
+            border-bottom: 2px solid var(--accent);
+        }
+
+        /* Rank Display */
+        #res-rank {
+            font-family: var(--font-display);
+            font-size: 5rem;
+            font-weight: 900;
+            color: #FFD700;
+            text-shadow: 0 0 30px #FFD700, 4px 4px 0 rgba(0, 0, 0, 0.5);
+            line-height: 1;
+            margin: 0rem 0 1rem 0;
+            animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        @keyframes popIn {
+            0% {
+                transform: scale(0);
+                opacity: 0;
+            }
+
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        .result-buttons {
+            display: flex;
+            gap: 20px;
+            margin-top: 10px;
+        }
+
+        /* Ensure result screen content fits */
+        #result-screen {
+            justify-content: center;
+            /* Center vertically */
+            padding: 20px;
+            max-height: 100vh;
+            overflow-y: auto;
+            /* Scroll if absolutely necessary */
+        }
+
+        #result-screen h2 {
+            margin-bottom: 0.5rem;
+        }
+
+        border-top: 2px solid var(--accent);
         }
 
         /* Difficulty Buttons */
@@ -398,9 +453,29 @@
         .score-bar-fill {
             width: 0%;
             height: 100%;
-            background: linear-gradient(90deg, #E040FB, #7C4DFF);
-            box-shadow: 0 0 15px #E040FB;
+            background: linear-gradient(90deg, #FF9800, #FF5722);
+            /* Orange Theme */
+            box-shadow: 0 0 15px #FF9800;
             transition: width 0.5s;
+        }
+
+        .score-bar-fill.rainbow {
+            background: linear-gradient(90deg,
+                    #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #8f00ff,
+                    #ff0000);
+            background-size: 200% 100%;
+            animation: rainbowMove 2s linear infinite;
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.8), 0 0 40px rgba(255, 0, 255, 0.5);
+        }
+
+        @keyframes rainbowMove {
+            0% {
+                background-position: 100% 0;
+            }
+
+            100% {
+                background-position: 0 0;
+            }
         }
 
         .score-ranks {
@@ -570,15 +645,20 @@
                 <!-- Result Screen -->
                 <div id="result-screen" class="screen">
                     <h2>RESULT</h2>
+                    <div id="res-rank">--</div>
                     <div class="result-stats">
                         <div class="stat-item"><span>PERFECT</span><span id="res-perfect">0</span></div>
                         <div class="stat-item"><span>GREAT</span><span id="res-great">0</span></div>
                         <div class="stat-item"><span>GOOD</span><span id="res-good">0</span></div>
                         <div class="stat-item"><span>MISS</span><span id="res-miss">0</span></div>
+                        <div class="stat-item" style="color: var(--accent); font-weight: bold;"><span>MAX
+                                COMBO</span><span id="res-max-combo">0</span></div>
                         <div class="stat-total"><span>TOTAL SCORE</span><span id="res-score">0</span></div>
                     </div>
-                    <button id="restart-btn" class="action-btn">RETRY</button>
-                    <button id="quit-btn" class="back-btn">MENU</button>
+                    <div class="result-buttons">
+                        <button id="restart-btn" class="action-btn">RETRY</button>
+                        <button id="quit-btn" class="back-btn">MENU</button>
+                    </div>
                 </div>
             </div>
 

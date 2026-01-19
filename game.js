@@ -136,6 +136,13 @@ class GameEngine {
     }
 
     bindEvents() {
+        document.getElementById('speed-input').onchange = () => {
+            if (this.currentFile) this.analyzeAudio(this.currentFile);
+        };
+        document.getElementById('interval-input').onchange = () => {
+            if (this.currentFile) this.analyzeAudio(this.currentFile);
+        };
+
         document.getElementById('start-btn').onclick = () => {
             this.initAudio();
             this.switchScreen('song-select');
@@ -292,25 +299,33 @@ class GameEngine {
             for (let i = 0; i < data.length; i += chunkSize) {
                 const now = (i / sampleRate) * 1000;
 
-                // RMS calculation
+                // Simplified Energy calculation (Sum of Absolute Values)
+                // This better approximates the bass-bin average in real-time
                 let sum = 0;
                 let count = 0;
                 for (let j = 0; j < chunkSize && (i + j) < data.length; j++) {
-                    sum += data[i + j] * data[i + j];
+                    sum += Math.abs(data[i + j]);
                     count++;
                 }
-                let energy = Math.sqrt(sum / count) * 255 * 1.5; // Adjusted scaling for RMS vs FFT
+                let energy = (sum / count) * 255 * 3.0; // Scaled to match game's bass-average range
 
                 if (avgEnergy === 0) avgEnergy = energy;
                 else avgEnergy = avgEnergy * 0.95 + energy * 0.05;
 
-                const isBeat = energy > avgEnergy * sensitivity && energy > 18;
+                const isBeat = energy > avgEnergy * sensitivity && energy > 20; // Exact match to update()
                 const isTime = now - lastAnalysisTime > minInterval;
                 const remainingTime = (audioBuffer.duration * 1000) - now;
                 const canSpawn = remainingTime > (noteDuration + 500);
 
                 if (isBeat && isTime && canSpawn) {
-                    totalNotes++;
+                    const intensity = energy / avgEnergy;
+
+                    // Deterministic Simultaneous Check matching spawnNote
+                    let simulChance = 10;
+                    if (intensity > 1.6) simulChance = 40;
+                    const isSimul = (Math.floor(now * 10) % 100) < simulChance;
+
+                    totalNotes += isSimul ? 2 : 1;
                     lastAnalysisTime = now;
                 }
             }
@@ -362,12 +377,7 @@ class GameEngine {
 
     spawnNote(intensity = 1.0) {
         if (this.isPaused) return;
-        const spawnTime = performance.now() - this.startTime;
-
-        // Difficulty Settings
-        const duration = this.noteDuration;
-
-        const rand = Math.random();
+        const now = performance.now() - this.startTime;
 
         const getRandomTarget = (exclude = []) => {
             let idx;
@@ -375,19 +385,21 @@ class GameEngine {
             return idx;
         };
 
-        // Probability of simultaneous notes increases with intensity
-        // intense beat (> 1.6x average) has higher chance of simultaneous
-        let simulChance = 0.1;
-        if (intensity > 1.6) simulChance = 0.4;
+        // Deterministic Simultaneous Check
+        // Using 'now' as a seed to match pre-analysis
+        let simulChance = 10; // 10% base
+        if (intensity > 1.6) simulChance = 40; // 40% for intense beats
 
-        if (rand < simulChance) {
+        const isSimul = (Math.floor(now * 10) % 100) < simulChance;
+
+        if (isSimul) {
             const t1 = getRandomTarget();
             const t2 = getRandomTarget([t1]);
-            this.addNote(t1, spawnTime, duration, 'normal', 0, true);
-            this.addNote(t2, spawnTime, duration, 'normal', 0, true);
+            this.addNote(t1, now, this.noteDuration, 'normal', 0, true);
+            this.addNote(t2, now, this.noteDuration, 'normal', 0, true);
         } else {
             const t = getRandomTarget();
-            this.addNote(t, spawnTime, duration, 'normal');
+            this.addNote(t, now, this.noteDuration, 'normal');
         }
     }
 

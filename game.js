@@ -39,7 +39,7 @@ class GameEngine {
             // Analysis
             this.lastAnalysisTime = 0;
             this.beatThreshold = 140;
-            this.minBeatInterval = 400;
+            this.minBeatInterval = 300;
             this.lastAnalysisTime = 0;
             this.avgEnergy = 0;
             this.lastEnergy = 0;
@@ -75,6 +75,7 @@ class GameEngine {
             this.audioCtx = new AudioContext();
             this.analyser = this.audioCtx.createAnalyser();
             this.analyser.fftSize = 256;
+            this.analyser.smoothingTimeConstant = 0; // Instant response for better sync
             this.video.crossOrigin = "anonymous";
             this.source = this.audioCtx.createMediaElementSource(this.video);
 
@@ -255,6 +256,11 @@ class GameEngine {
 
         this.activeTouches.clear();
         this.isPaused = false;
+
+        // Reset Detection State for Sync
+        this.avgEnergy = 0;
+        this.lastAnalysisTime = 0;
+
         this.updateHUD();
         this.switchScreen('playing');
 
@@ -278,72 +284,61 @@ class GameEngine {
         status.innerText = "Decoding audio...";
 
         try {
-            const context = this.audioCtx || new (window.AudioContext || window.webkitAudioContext)();
             const arrayBuffer = await file.arrayBuffer();
-            const audioBuffer = await context.decodeAudioData(arrayBuffer);
+            const tempCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const audioBuffer = await tempCtx.decodeAudioData(arrayBuffer);
+            tempCtx.close();
 
-            status.innerText = "Analyzing rhythm...";
-            const data = audioBuffer.getChannelData(0);
-            const sampleRate = audioBuffer.sampleRate;
+            status.innerText = "Simulating game loop...";
 
-            // Simulation Parameters (must match update() loop)
-            const sensitivity = 1.02;
+            const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(
+                1, audioBuffer.length, audioBuffer.sampleRate
+            );
+
+            const source = offlineCtx.createBufferSource();
+            source.buffer = audioBuffer;
+            const analyser = offlineCtx.createAnalyser();
+            analyser.fftSize = 256;
+            analyser.smoothingTimeConstant = 0;
+            const gainNode = offlineCtx.createGain();
+            gainNode.gain.value = 0.5;
+            source.connect(gainNode);
+            gainNode.connect(analyser);
+            analyser.connect(offlineCtx.destination);
+
             const minInterval = parseInt(document.getElementById('interval-input').value);
             const noteDuration = parseFloat(document.getElementById('speed-input').value) * 1000;
 
             let totalNotes = 0;
-            let avgEnergy = 0;
-            let lastAnalysisTime = 0;
+            this.avgEnergy = 0;
+            this.lastAnalysisTime = -minInterval;
+            const freqData = new Uint8Array(analyser.frequencyBinCount);
 
-            // process in segment chunks (roughly matching FFT slice rate)
-            const chunkSize = Math.floor(sampleRate * 0.02);
+            source.start(0);
 
-            for (let i = 0; i < data.length; i += chunkSize) {
-                const now = (i / sampleRate) * 1000;
+            const step = 0.005; // 5ms sampling
+            for (let t = 0; t < audioBuffer.duration; t += step) {
+                offlineCtx.suspend(t).then(() => {
+                    analyser.getByteFrequencyData(freqData);
+                    let energy = (freqData[0] + freqData[1] + freqData[2] + freqData[3] + freqData[4]) / 5;
 
-                // Bass-biased Energy calculation (Low Pass Filter)
-                // This better mimics FFT bass bins used in update()
-                let sum = 0;
-                let count = 0;
-                let lpf = 0;
-                const filterAlpha = 0.15; // Rough 800Hz-ish proxy
-                for (let j = 0; j < chunkSize && (i + j) < data.length; j++) {
-                    const sample = data[i + j];
-                    lpf = filterAlpha * sample + (1 - filterAlpha) * lpf; // EMA LPF
-                    sum += Math.abs(lpf);
-                    count++;
-                }
-                let energy = (sum / count) * 255 * 6.5; // Re-calibrated scale
+                    const result = this.handleBeatDetection(t * 1000, energy, audioBuffer.duration, minInterval, noteDuration);
+                    if (result > 0) totalNotes += result;
 
-                if (avgEnergy === 0) avgEnergy = energy;
-                else avgEnergy = avgEnergy * 0.95 + energy * 0.05;
-
-                const isBeat = energy > avgEnergy * sensitivity && energy > 20; // 100% match to update()
-                const isTime = now - lastAnalysisTime > minInterval;
-                const canSpawn = (audioBuffer.duration * 1000) - now > (noteDuration + 500);
-
-                if (isBeat && isTime && canSpawn) {
-                    const intensity = energy / avgEnergy;
-
-                    // Deterministic Simultaneous Check matching spawnNote
-                    let simulChance = 10;
-                    if (intensity > 1.6) simulChance = 40;
-                    const isSimul = (Math.floor(now * 10) % 100) < simulChance;
-
-                    totalNotes += isSimul ? 2 : 1;
-                    lastAnalysisTime = now;
-                }
+                    offlineCtx.resume();
+                });
             }
+
+            await offlineCtx.startRendering();
 
             const baseScore = totalNotes * 1000;
             const comboBonus = 10 * (totalNotes * (totalNotes + 1) / 2);
             const perfectScore = baseScore + comboBonus;
 
-            // Calibration: Rank thresholds
             this.analysisData = {
                 totalNotes: totalNotes,
                 perfectScore: perfectScore,
-                targetScore: perfectScore // Now 100% for progress gauge
+                targetScore: perfectScore
             };
 
             status.innerText = `Ready: ${totalNotes} notes detected`;
@@ -356,6 +351,34 @@ class GameEngine {
         } finally {
             this.isAnalyzing = false;
         }
+    }
+
+    handleBeatDetection(now, energy, totalDuration, minInterval, noteDuration) {
+        if (this.avgEnergy === 0) this.avgEnergy = energy;
+        else this.avgEnergy = this.avgEnergy * 0.95 + energy * 0.05;
+
+        const sensitivity = 1.02;
+        const isBeat = energy > this.avgEnergy * sensitivity && energy > 20;
+        const isTime = now - this.lastAnalysisTime > minInterval;
+        const remainingTime = (totalDuration * 1000) - now;
+        const canSpawn = remainingTime > (noteDuration + 500);
+
+        if (isBeat && isTime && canSpawn) {
+            const intensity = energy / this.avgEnergy;
+            this.lastAnalysisTime = now;
+
+            let simulChance = 10;
+            if (intensity > 1.6) simulChance = 40;
+            const isSimul = (Math.floor(now * 10) % 100) < simulChance;
+
+            if (this.isAnalyzing) {
+                return isSimul ? 2 : 1;
+            } else {
+                this.spawnNote(intensity, isSimul);
+                return 0;
+            }
+        }
+        return 0;
     }
 
     togglePause() {
@@ -380,7 +403,7 @@ class GameEngine {
         }
     }
 
-    spawnNote(intensity = 1.0) {
+    spawnNote(intensity = 1.0, isSimulOverride = null) {
         if (this.isPaused) return;
         const now = this.video.currentTime * 1000;
 
@@ -390,12 +413,14 @@ class GameEngine {
             return idx;
         };
 
-        // Deterministic Simultaneous Check
-        // Using 'now' as a seed to match pre-analysis
-        let simulChance = 10; // 10% base
-        if (intensity > 1.6) simulChance = 40; // 40% for intense beats
-
-        const isSimul = (Math.floor(now * 10) % 100) < simulChance;
+        let isSimul;
+        if (isSimulOverride !== null) {
+            isSimul = isSimulOverride;
+        } else {
+            let simulChance = 10;
+            if (intensity > 1.6) simulChance = 40;
+            isSimul = (Math.floor(now * 10) % 100) < simulChance;
+        }
 
         if (isSimul) {
             const t1 = getRandomTarget();
@@ -600,38 +625,9 @@ class GameEngine {
         if (this.analyser) {
             const data = new Uint8Array(this.analyser.frequencyBinCount);
             this.analyser.getByteFrequencyData(data);
-            let energy = 0; for (let i = 0; i < 5; i++) energy += data[i];
-            energy /= 5;
+            let energy = (data[0] + data[1] + data[2] + data[3] + data[4]) / 5;
 
-
-
-            // Dynamic Threshold Logic
-            // Update moving average
-            if (this.avgEnergy === 0) this.avgEnergy = energy;
-            else this.avgEnergy = this.avgEnergy * 0.95 + energy * 0.05;
-
-            // Difficulty Multipliers (Sensitivity)
-            // Higher multiplier = requires stronger beat relative to average to trigger
-            let sensitivity = 1.02;
-            let minInterval = this.minBeatInterval;
-
-            // Detect onset: Current energy significantly higher than average
-            // Also ensure some absolute minimum energy to avoid noise in silence
-            const isBeat = energy > this.avgEnergy * sensitivity && energy > 20;
-            const isTime = now - this.lastAnalysisTime > minInterval;
-
-            // Check if there is enough time for the note to reach target before video ends
-            // Buffered by 500ms so notes don't spawn right at the wire
-            const remainingTime = (this.video.duration * 1000) - now;
-            const canSpawn = remainingTime > (this.noteDuration + 500);
-
-            if (isBeat && isTime && canSpawn) {
-                // Determine note density based on intensity
-                // If energy is VERY high (much higher than average), maybe spawn simultaneous?
-                const intensity = energy / this.avgEnergy;
-                this.spawnNote(intensity);
-                this.lastAnalysisTime = now;
-            }
+            this.handleBeatDetection(now, energy, this.video.duration, this.minBeatInterval, this.noteDuration);
             this.lastEnergy = energy;
         }
 

@@ -122,6 +122,13 @@
             display: flex;
         }
 
+        #result-screen {
+            height: 80%;
+            top: 10%;
+            border-radius: 20px;
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.8);
+        }
+
         #hud {
             background: transparent;
             backdrop-filter: none;
@@ -341,39 +348,119 @@
             transform: scale(0.95);
         }
 
-        /* Pause Button */
-        .pause-btn {
+        /* HUD Top Bar */
+        .top-bar {
             position: absolute;
-            bottom: 30px;
-            left: 30px;
-            width: 60px;
-            height: 60px;
-            background: rgba(255, 255, 255, 0.1);
-            border: 2px solid rgba(255, 255, 255, 0.3);
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 80px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 20px;
+            /* background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent); */
+            pointer-events: none;
+        }
+
+        /* Score Number (Left) */
+        .score-current-val {
+            font-family: var(--font-display);
+            font-size: 2rem;
+            /* Larger */
+            color: white;
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
+            min-width: 150px;
+        }
+
+        /* Score Gauge (Center) */
+        .score-gauge-container {
+            flex-grow: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 0 40px;
+        }
+
+        .score-bar-bg {
+            width: 100%;
+            max-width: 600px;
+            height: 24px;
+            /* Thicker */
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 12px;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+        }
+
+        .score-bar-fill {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #E040FB, #7C4DFF);
+            box-shadow: 0 0 15px #E040FB;
+            transition: width 0.5s;
+        }
+
+        .score-ranks {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: space-between;
+            padding: 0 10px;
+            font-size: 12px;
+            /* Larger */
+            line-height: 24px;
+            /* Centered vertically */
+            color: rgba(255, 255, 255, 0.7);
+            font-weight: bold;
+            pointer-events: none;
+        }
+
+        .score-ranks span {
+            flex: 1;
+            text-align: right;
+            border-right: 1px solid rgba(255, 255, 255, 0.3);
+            padding-right: 5px;
+        }
+
+        .score-ranks span:last-child {
+            border: none;
+        }
+
+        /* Top Pause Button */
+        .pause-btn-top {
+            width: 40px;
+            height: 40px;
+            border: 2px solid white;
             border-radius: 50%;
             display: flex;
             justify-content: center;
             align-items: center;
             cursor: pointer;
-            z-index: 100;
             pointer-events: auto;
+            background: rgba(255, 255, 255, 0.1);
             transition: all 0.2s;
         }
 
-        .pause-btn::before,
-        .pause-btn::after {
-            content: '';
-            width: 6px;
-            height: 20px;
-            background: white;
-            display: block;
-            margin: 0 2px;
-            border-radius: 2px;
+        .pause-btn-top:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: scale(1.1);
         }
 
-        .pause-btn:hover {
-            background: rgba(255, 255, 255, 0.2);
-            border-color: white;
+        .pause-icon {
+            width: 12px;
+            height: 12px;
+            background: transparent;
+            border-left: 4px solid white;
+            border-right: 4px solid white;
+            box-sizing: content-box;
+            padding-left: 2px;
+            /* Gap */
         }
 
         /* Pause Screen */
@@ -418,23 +505,58 @@
                         <input type="file" id="video-upload" accept="video/mp4" style="display: none;">
                         <span id="file-name">No file selected</span>
                     </div>
-                    <div class="diff-select-container">
-                        <button class="diff-btn easy" onclick="game.startGame('easy')">EASY</button>
-                        <button class="diff-btn normal" onclick="game.startGame('normal')">NORMAL</button>
-                        <button class="diff-btn hard" onclick="game.startGame('hard')">HARD</button>
+                    <div class="settings-section"
+                        style="width: 100%; max-width: 400px; margin: 1rem 0; font-family: var(--font-display);">
+                        <div class="setting-item" style="margin-bottom: 1rem;">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                                <label>NOTE SPEED</label>
+                                <span><span id="speed-display">1.5</span> sec</span>
+                            </div>
+                            <input type="range" id="speed-input" min="0.5" max="2.0" step="0.1" value="1.5"
+                                style="width: 100%; accent-color: var(--accent);"
+                                oninput="document.getElementById('speed-display').innerText = this.value">
+                        </div>
+                        <div class="setting-item" style="margin-bottom: 1.5rem;">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                                <label>MIN INTERVAL</label>
+                                <span><span id="interval-display">250</span> ms</span>
+                            </div>
+                            <input type="range" id="interval-input" min="50" max="350" step="50" value="250"
+                                style="width: 100%; accent-color: var(--accent);"
+                                oninput="document.getElementById('interval-display').innerText = this.value">
+                        </div>
+                        <button class="action-btn" onclick="game.startGame()" style="width: 100%;">START GAME</button>
                     </div>
                     <button id="back-to-menu" class="back-btn">BACK</button>
                 </div>
 
                 <!-- Gameplay UI -->
                 <div id="hud" class="screen">
-                    <!-- Score removed -->
+                    <div class="top-bar">
+                        <!-- Score (Moved to Left) -->
+                        <div id="score-val" class="score-current-val">0</div>
+
+                        <!-- Score Gauge (Center) -->
+                        <div class="score-gauge-container">
+                            <div class="score-bar-bg">
+                                <div id="score-bar-fill" class="score-bar-fill"></div>
+                                <div class="score-ranks">
+                                    <span>C</span><span>B</span><span>A</span><span>S</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Pause Button (Top Right) -->
+                        <div id="pause-btn" class="pause-btn-top">
+                            <div class="pause-icon"></div>
+                        </div>
+                    </div>
+
                     <div class="combo-container">
                         <div id="combo-val">0</div>
                         <div class="label">COMBO</div>
                     </div>
                     <div id="judgment-text"></div>
-                    <div id="pause-btn" class="pause-btn"></div>
                 </div>
 
                 <!-- Pause Screen -->

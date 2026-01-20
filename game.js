@@ -662,6 +662,9 @@ class GameEngine {
         this.isPlaying = false;
         this.video.pause();
         this.video.classList.remove('visible');
+        if (this.currentFile) {
+            document.getElementById('res-song-title').innerText = this.currentFile.name;
+        }
         document.getElementById('res-perfect').innerText = this.stats.perfect;
         document.getElementById('res-great').innerText = this.stats.great;
         document.getElementById('res-good').innerText = this.stats.good;

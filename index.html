@@ -651,23 +651,16 @@
                         <div id="score-val" class="score-current-val">0</div>
 
                         <!-- Score Gauge (Center) -->
-                        <div class="score-gauge-container" style="flex-direction: column; gap: 5px;">
+                        <div class="score-gauge-container">
                             <!-- Main Score Gauge -->
                             <div class="score-bar-bg">
                                 <div id="score-bar-fill" class="score-bar-fill"></div>
                                 <div class="score-ranks">
                                     <span style="left: 15px; border-left: none;">C</span>
-                                    <span style="left: 60%;">B</span>
+                                    <span style="left: 50%;">B</span>
                                     <span style="left: 70%;">A</span>
-                                    <span style="left: 80%;">S</span>
-                                    <span style="left: 90%;">SS</span>
+                                    <span style="left: 90%;">S</span>
                                 </div>
-                            </div>
-
-                            <!-- Fever Gauge -->
-                            <div class="fever-bar-bg">
-                                <div id="fever-bar-fill" class="fever-bar-fill"></div>
-                                <span class="fever-text-small">FEVER</span>
                             </div>
                         </div>
 
@@ -682,7 +675,7 @@
                         <div class="label">COMBO</div>
                     </div>
                     <div id="judgment-text"></div>
-                    <div id="fever-overlay-text">FEVER!!</div>
+
                 </div>
 
                 <!-- Pause Screen -->
@@ -702,6 +695,7 @@
                                 style="font-family: var(--font-display); font-size: 1.2rem; color: var(--accent); margin-bottom: 0.5rem; text-align: center; max-width: 90%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                                 --</div>
                             <div id="res-rank">--</div>
+                            <div id="res-full-combo" style="display: none;">FULL COMBO!!</div>
                             <div class="result-stats">
                                 <div class="stat-item"><span>PERFECT</span><span id="res-perfect">0</span></div>
                                 <div class="stat-item"><span>GREAT</span><span id="res-great">0</span></div>

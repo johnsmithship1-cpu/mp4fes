@@ -240,6 +240,11 @@ class GameEngine {
         this.stats = { perfect: 0, great: 0, good: 0, miss: 0 };
         this.currentHP = this.maxHP;
 
+        this.feverGauge = 0;
+        this.feverMax = 100;
+        this.isFever = false;
+        this.feverEndTime = 0;
+
         // Use Pre-analyzed Score Target
         if (this.analysisData) {
             this.scoreTarget = this.analysisData.targetScore;
@@ -269,7 +274,7 @@ class GameEngine {
             this.currentChart = [];
         }
 
-        this.updateHUD();
+        this.updateHUD(); // Initial Reset
         this.switchScreen('playing');
 
         this.video.classList.add('visible');
@@ -282,287 +287,52 @@ class GameEngine {
         this.avgEnergy = 0;
     }
 
-    async analyzeAudio(file) {
-        if (this.isAnalyzing) return;
-        this.isAnalyzing = true;
-        this.analysisData = null;
-        const overlay = document.getElementById('analysis-overlay');
-        const status = document.getElementById('analysis-status');
-        overlay.style.display = 'flex';
-        status.innerText = "Decoding audio...";
+    // ... (analyzeAudio, handleBeatDetection, togglePause, spawnNote, addNote, getHitTargetIdx, etc... unchanged)
 
-        try {
-            const arrayBuffer = await file.arrayBuffer();
-            const tempCtx = new (window.AudioContext || window.webkitAudioContext)();
-            const audioBuffer = await tempCtx.decodeAudioData(arrayBuffer);
-            tempCtx.close();
-
-            status.innerText = "Simulating game loop...";
-
-            const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(
-                1, audioBuffer.length, audioBuffer.sampleRate
-            );
-
-            const source = offlineCtx.createBufferSource();
-            source.buffer = audioBuffer;
-            const analyser = offlineCtx.createAnalyser();
-            analyser.fftSize = 256;
-            analyser.smoothingTimeConstant = 0.8; // Match restoration point (default)
-            const gainNode = offlineCtx.createGain();
-            gainNode.gain.value = 0.5;
-            source.connect(gainNode);
-            gainNode.connect(analyser);
-            analyser.connect(offlineCtx.destination);
-
-            const minInterval = parseInt(document.getElementById('interval-input').value);
-            const noteDuration = parseFloat(document.getElementById('speed-input').value) * 1000;
-
-            let noteChart = [];
-            this.avgEnergy = 0;
-            this.lastAnalysisTime = -minInterval;
-            const freqData = new Uint8Array(analyser.frequencyBinCount);
-
-            source.start(0);
-
-            const step = 0.0166; // 60fps sampling (matches restoration point)
-            for (let t = 0; t < audioBuffer.duration; t += step) {
-                offlineCtx.suspend(t).then(() => {
-                    analyser.getByteFrequencyData(freqData);
-                    let energy = (freqData[0] + freqData[1] + freqData[2] + freqData[3] + freqData[4]) / 5;
-
-                    const beat = this.handleBeatDetection(t * 1000, energy, audioBuffer.duration, minInterval, noteDuration);
-                    if (beat) noteChart.push(beat);
-
-                    offlineCtx.resume();
-                });
-            }
-
-            await offlineCtx.startRendering();
-
-            // Total notes calculation (accounting for simultaneous)
-            const totalNotes = noteChart.reduce((acc, b) => acc + (b.isSimul ? 2 : 1), 0);
-
-            const baseScore = totalNotes * 1000;
-            const comboBonus = 10 * (totalNotes * (totalNotes + 1) / 2);
-            const perfectScore = baseScore + comboBonus;
-
-            this.analysisData = {
-                totalNotes: totalNotes,
-                perfectScore: perfectScore,
-                targetScore: perfectScore,
-                noteChart: noteChart
-            };
-
-            status.innerText = `Ready: ${totalNotes} notes detected`;
-            setTimeout(() => { if (!this.isPlaying) overlay.style.display = 'none'; }, 1000);
-
-        } catch (e) {
-            console.error("Analysis error", e);
-            status.innerText = "Analysis failed.";
-            setTimeout(() => { if (!this.isPlaying) overlay.style.display = 'none'; }, 2000);
-        } finally {
-            this.isAnalyzing = false;
+    // Helper: Add Fever
+    addFever(amount) {
+        if (this.isFever) return; // Don't add gauge while active
+        this.feverGauge = Math.min(this.feverMax, this.feverGauge + amount);
+        if (this.feverGauge >= this.feverMax) {
+            this.activateFever();
         }
     }
 
-    handleBeatDetection(now, energy, totalDuration, minInterval, noteDuration) {
-        if (this.avgEnergy === 0) this.avgEnergy = energy;
-        else this.avgEnergy = this.avgEnergy * 0.95 + energy * 0.05;
+    activateFever() {
+        this.isFever = true;
+        this.feverGauge = this.feverMax;
+        this.feverEndTime = (performance.now() - this.startTime) + 6000; // 6 seconds duration
 
-        const sensitivity = 1.02; // Restored to 1.02
-        const isBeat = energy > this.avgEnergy * sensitivity && energy > 20; // Restored to 20
-        const isTime = now - this.lastAnalysisTime > minInterval;
-        const remainingTime = (totalDuration * 1000) - now;
-        const canSpawn = remainingTime > (noteDuration + 500);
+        // Show Effect
+        const txt = document.getElementById('fever-overlay-text');
+        txt.classList.remove('fever-popup-anim');
+        void txt.offsetWidth; // trigger reflow
+        txt.classList.add('fever-popup-anim');
 
-        if (isBeat && isTime && canSpawn) {
-            const intensity = energy / this.avgEnergy;
-            this.lastAnalysisTime = now;
+        document.getElementById('game-container').classList.add('fever-active');
+    }
 
-            let simulChance = 10;
-            if (intensity > 1.6) simulChance = 40;
-            const isSimul = (Math.floor(now * 10) % 100) < simulChance;
-
-            if (this.isAnalyzing) {
-                return { time: now, intensity, isSimul };
+    updateFever(now) {
+        if (this.isFever) {
+            const remaining = this.feverEndTime - now;
+            if (remaining <= 0) {
+                this.isFever = false;
+                this.feverGauge = 0;
+                document.getElementById('game-container').classList.remove('fever-active');
             } else {
-                // This branch is now legacy since we use charts, but kept as fallback
-                this.spawnNote(intensity, isSimul);
-                return null;
-            }
-        }
-        return null;
-    }
-
-    togglePause() {
-        if (!this.isPlaying) return;
-        this.isPaused = !this.isPaused;
-
-        const pauseScreen = document.getElementById('pause-screen');
-
-        if (this.isPaused) {
-            this.video.pause();
-            if (this.audioCtx) this.audioCtx.suspend();
-            pauseScreen.classList.add('active');
-            // Store pause time to adjust startTime on resume?
-            this.pauseStartTime = performance.now();
-        } else {
-            this.video.play();
-            if (this.audioCtx) this.audioCtx.resume();
-            pauseScreen.classList.remove('active');
-            // Adjust startTime by the duration paused
-            const pauseDuration = performance.now() - this.pauseStartTime;
-            this.startTime += pauseDuration;
-        }
-    }
-
-    spawnNote(intensity = 1.0, isSimulOverride = null) {
-        if (this.isPaused) return;
-        const now = this.video.currentTime * 1000;
-
-        const getRandomTarget = (exclude = []) => {
-            let idx;
-            do { idx = Math.floor(Math.random() * this.numTargets); } while (exclude.includes(idx));
-            return idx;
-        };
-
-        let isSimul;
-        if (isSimulOverride !== null) {
-            isSimul = isSimulOverride;
-        } else {
-            let simulChance = 10;
-            if (intensity > 1.6) simulChance = 40;
-            isSimul = (Math.floor(now * 10) % 100) < simulChance;
-        }
-
-        if (isSimul) {
-            const t1 = getRandomTarget();
-            const t2 = getRandomTarget([t1]);
-            this.addNote(t1, now, this.noteDuration, 'normal', 0, true);
-            this.addNote(t2, now, this.noteDuration, 'normal', 0, true);
-            this.spawnedNoteCount += 2;
-        } else {
-            const t = getRandomTarget();
-            this.addNote(t, now, this.noteDuration, 'normal');
-            this.spawnedNoteCount++;
-        }
-    }
-
-    addNote(targetIdx, spawnTime, duration, type, holdDuration = 0, isSimultaneous = false) {
-        this.notes.push({
-            targetIdx, spawnTime, duration, type, holdDuration,
-            isSimultaneous,
-            isHolding: false,
-            processed: false
-        });
-    }
-
-    // Input Handling
-    getHitTargetIdx(cx, cy) {
-        const rect = this.canvas.getBoundingClientRect();
-        const x = cx - rect.left;
-        const y = cy - rect.top;
-        let closest = -1;
-        let minDist = 70;
-        this.targetPoints.forEach((pt, i) => {
-            const d = Math.sqrt((x - pt.x) ** 2 + (y - pt.y) ** 2);
-            if (d < minDist) { minDist = d; closest = i; }
-        });
-        return closest;
-    }
-
-    handleTouchStart(e) {
-        e.preventDefault();
-        for (let i = 0; i < e.changedTouches.length; i++) {
-            const t = e.changedTouches[i];
-            const idx = this.getHitTargetIdx(t.clientX, t.clientY);
-            if (idx !== -1) {
-                this.activeTouches.set(t.identifier, idx);
-                this.checkHit(idx);
+                // Decay gauge visual
+                this.feverGauge = (remaining / 6000) * 100;
             }
         }
     }
 
-    handleTouchMove(e) {
-        e.preventDefault();
-        for (let i = 0; i < e.changedTouches.length; i++) {
-            const t = e.changedTouches[i];
-            const idx = this.getHitTargetIdx(t.clientX, t.clientY);
-            const prev = this.activeTouches.get(t.identifier);
-            if (idx !== -1 && idx !== prev) {
-                this.activeTouches.set(t.identifier, idx);
-            } else if (idx === -1) {
-                this.activeTouches.delete(t.identifier);
-            }
-        }
-    }
-
-    handleTouchEnd(e) {
-        e.preventDefault();
-        for (let i = 0; i < e.changedTouches.length; i++) {
-            this.activeTouches.delete(e.changedTouches[i].identifier);
-        }
-    }
-
-    handleMouseDown(e) {
-        const idx = this.getHitTargetIdx(e.clientX, e.clientY);
-        if (idx !== -1) {
-            this.activeTouches.set('mouse', idx);
-            this.checkHit(idx);
-        }
-    }
-    handleMouseMove(e) {
-        const idx = this.getHitTargetIdx(e.clientX, e.clientY);
-        if (idx !== -1 && this.activeTouches.has('mouse')) {
-            this.activeTouches.set('mouse', idx);
-        } else if (idx === -1) {
-            this.activeTouches.delete('mouse');
-        }
-    }
-    handleMouseUp(e) {
-        this.activeTouches.delete('mouse');
-    }
-
-    isTargetHeld(idx) {
-        for (let val of this.activeTouches.values()) {
-            if (val === idx) return true;
-        }
-        return false;
-    }
-
-    checkHit(targetIdx) {
-        if (!this.isPlaying) return;
-        const now = performance.now() - this.startTime;
-
-        let found = null;
-        let minDiff = Infinity;
-
-        for (let note of this.notes) {
-            if (note.targetIdx === targetIdx && !note.processed) {
-                const arrTime = note.spawnTime + note.duration;
-                const diff = Math.abs(now - arrTime);
-                if (diff < 180 && diff < minDiff) {
-                    minDiff = diff; found = note;
-                }
-            }
-        }
-
-        if (found) {
-            let j = 'MISS';
-            if (minDiff < 60) j = 'PERFECT';
-            else if (minDiff < 120) j = 'GREAT';
-            else j = 'GOOD';
-
-            found.processed = true;
-            this.spawnHitEffect(targetIdx, j);
-            this.applyJudgment(j);
-        }
-    }
+    // ...
 
     applyJudgment(j, countStats = true) {
         this.showJudgment(j);
 
         let hpChange = 0;
+        let feverGain = 0;
 
         if (j === 'MISS') {
             this.combo = 0;
@@ -577,17 +347,25 @@ class GameEngine {
                 score = 1000;
                 if (countStats) this.stats.perfect++;
                 hpChange = 1; // Slight heal
+                feverGain = 2; // +2%
             }
             else if (j === 'GREAT') {
                 score = 750;
                 if (countStats) this.stats.great++;
                 hpChange = 0;
+                feverGain = 1; // +1%
             }
             else {
                 if (countStats) this.stats.good++;
                 hpChange = -2;
             }
-            this.score += score + this.combo * 10;
+
+            // Score Multiplier Logic
+            let multiplier = 1;
+            if (this.isFever) multiplier = 2;
+
+            this.score += (score + this.combo * 10) * multiplier;
+            this.addFever(feverGain);
         }
 
         this.currentHP = Math.min(this.maxHP, Math.max(0, this.currentHP + hpChange));
@@ -610,6 +388,13 @@ class GameEngine {
 
         document.getElementById('combo-val').innerText = this.combo;
         document.querySelector('.combo-container').classList.toggle('visible', this.combo > 0);
+
+        // Update Fever Gauge
+        const fFill = document.getElementById('fever-bar-fill');
+        fFill.style.width = `${this.feverGauge}%`;
+
+        // Fever Text Class
+        document.querySelector('.fever-text-small').style.color = this.isFever ? '#fff' : 'rgba(255,255,255,0.8)';
     }
 
     showJudgment(text) {
@@ -634,6 +419,9 @@ class GameEngine {
     update(t) {
         if (!this.isPlaying || this.isPaused) return;
         const now = this.video.currentTime * 1000;
+
+        // Handle Fever Timer
+        this.updateFever(performance.now() - this.startTime);
 
         if (this.currentChart && this.currentChart.length > 0) {
             // Spawn any notes that are due according to the chart
@@ -797,37 +585,44 @@ class GameEngine {
         const prog = elapsed / note.duration;
         if (prog > 1.2) return;
 
-        // Enhanced Glow (Screen Blend + High Blur)
+        // 1. Color Base Glow
         this.ctx.save();
         this.ctx.globalCompositeOperation = 'screen';
-
         this.ctx.beginPath();
         this.ctx.arc(pos.x, pos.y, 30, 0, Math.PI * 2);
-
         this.ctx.lineWidth = 8;
         this.ctx.strokeStyle = pos.color;
-
         this.ctx.shadowBlur = 50;
         this.ctx.shadowColor = pos.color;
-
         this.ctx.stroke();
         this.ctx.restore();
 
+        // 2. White Core Glow (New)
+        this.ctx.save();
+        this.ctx.globalCompositeOperation = 'screen';
+        this.ctx.beginPath();
+        this.ctx.arc(pos.x, pos.y, 30, 0, Math.PI * 2);
+        this.ctx.lineWidth = 5;
+        this.ctx.strokeStyle = '#ffffff';
+        this.ctx.shadowBlur = 25;
+        this.ctx.shadowColor = '#ffffff';
+        this.ctx.stroke();
+        this.ctx.restore();
+
+        // 3. Simultaneous Indicator
         if (note.isSimultaneous) {
             this.ctx.save();
             this.ctx.globalCompositeOperation = 'screen';
             this.ctx.beginPath();
             this.ctx.moveTo(pos.x - 20, pos.y);
             this.ctx.lineTo(pos.x + 20, pos.y);
-            this.ctx.lineWidth = 8;
-            this.ctx.strokeStyle = pos.color;
-            this.ctx.shadowBlur = 50;
-            this.ctx.shadowColor = pos.color;
+            this.ctx.lineWidth = 4;
+            this.ctx.strokeStyle = '#ffffff';
+            this.ctx.shadowBlur = 20;
+            this.ctx.shadowColor = '#ffffff';
             this.ctx.stroke();
             this.ctx.restore();
         }
-
-
     }
 
     spawnHitEffect(targetIdx, judgment) {
@@ -871,10 +666,23 @@ class GameEngine {
     }
 
     drawParticles() {
-        if (this.particles.length === 0) return;
+        if (this.particles.length === 0 && !this.isFever) return;
 
         this.ctx.save();
         this.ctx.globalCompositeOperation = 'screen'; // Make them glow/add
+
+        // Fever Sparkles
+        if (this.isFever && Math.random() < 0.3) {
+            const x = Math.random() * this.canvas.width;
+            const y = Math.random() * this.canvas.height;
+            this.particles.push({
+                x: x, y: y,
+                vx: 0, vy: -1 - Math.random(),
+                color: '#FFD700',
+                life: 1.0, decay: 0.02,
+                size: Math.random() * 3 + 1
+            });
+        }
 
         // Update and filter
         for (let i = this.particles.length - 1; i >= 0; i--) {

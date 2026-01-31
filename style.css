@@ -240,6 +240,14 @@ canvas {
     }
 }
 
+/* Spinner Animation */
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+
 /* Result Screen Stats */
 .result-stats {
     width: 80%;
@@ -271,4 +279,27 @@ canvas {
     font-size: 1rem;
     color: rgba(255, 255, 255, 0.5);
     letter-spacing: 2px;
+}
+
+#res-full-combo {
+    font-family: var(--font-display);
+    font-size: 2.5rem;
+    font-weight: 900;
+    color: #FFD700;
+    text-shadow: 0 0 10px #FFD700, 0 0 30px #FFA500;
+    margin-bottom: 1rem;
+    animation: pulse 1s infinite alternate;
+    letter-spacing: 5px;
+}
+
+@keyframes pulse {
+    0% {
+        transform: scale(1);
+        opacity: 0.8;
+    }
+
+    100% {
+        transform: scale(1.1);
+        opacity: 1;
+    }
 }

@@ -739,3 +739,207 @@ class GameEngine {
                 // Draw Connections (Arcs)
                 Object.values(simulGroups).forEach(group => {
                     if (group.length >= 2) {
+                        const n1 = group[0];
+                        const n2 = group[1];
+                        const pos1 = this.getNotePos(n1, now, centerX, centerY);
+                        const pos2 = this.getNotePos(n2, now, centerX, centerY);
+
+                        const r = Math.sqrt((pos1.x - centerX) ** 2 + (pos1.y - centerY) ** 2);
+                        const ang1 = Math.atan2(pos1.y - centerY, pos1.x - centerX);
+                        const ang2 = Math.atan2(pos2.y - centerY, pos2.x - centerX);
+
+                        const startAng = Math.min(ang1, ang2);
+                        const endAng = Math.max(ang1, ang2);
+
+                        ctx.save();
+                        // Gradient stroke
+                        const grad = ctx.createLinearGradient(pos1.x, pos1.y, pos2.x, pos2.y);
+                        grad.addColorStop(0, pos1.color);
+                        grad.addColorStop(1, pos2.color);
+
+                        ctx.beginPath();
+                        ctx.arc(centerX, centerY, r, startAng, endAng);
+                        ctx.lineWidth = 8;
+                        ctx.strokeStyle = grad;
+                        ctx.globalAlpha = 0.6;
+                        ctx.shadowBlur = 10;
+                        ctx.shadowColor = 'white';
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+                });
+
+                // Draw Notes
+                this.notes.forEach(note => {
+                    if (note.processed) return;
+                    this.drawHead(note, now, centerX, centerY);
+                });
+
+                this.drawEffects();
+                this.drawParticles();
+            }
+        } catch (e) {
+            console.error("Draw error", e);
+            throw e;
+        }
+    }
+
+    getNotePos(note, now, cx, cy) {
+        const elapsed = now - note.spawnTime;
+        const prog = elapsed / note.duration;
+        const target = this.targetPoints[note.targetIdx];
+        const x = cx + (target.x - cx) * prog;
+        const y = cy + (target.y - cy) * prog;
+        return { x, y, progress: prog, color: target.color };
+    }
+
+    drawHead(note, now, cx, cy) {
+        let pos;
+        const target = this.targetPoints[note.targetIdx];
+        pos = this.getNotePos(note, now, cx, cy);
+
+        const elapsed = now - note.spawnTime;
+        const prog = elapsed / note.duration;
+        if (prog > 1.2) return;
+
+        // 1. Color Base Glow
+        this.ctx.save();
+        this.ctx.globalCompositeOperation = 'screen';
+        this.ctx.beginPath();
+        this.ctx.arc(pos.x, pos.y, 30, 0, Math.PI * 2);
+        this.ctx.lineWidth = 8;
+        this.ctx.strokeStyle = pos.color;
+        this.ctx.shadowBlur = 50;
+        this.ctx.shadowColor = pos.color;
+        this.ctx.stroke();
+        this.ctx.restore();
+
+        // 2. White Core Glow (New)
+        this.ctx.save();
+        this.ctx.globalCompositeOperation = 'screen';
+        this.ctx.beginPath();
+        this.ctx.arc(pos.x, pos.y, 30, 0, Math.PI * 2);
+        this.ctx.lineWidth = 5;
+        this.ctx.strokeStyle = '#ffffff';
+        this.ctx.shadowBlur = 25;
+        this.ctx.shadowColor = '#ffffff';
+        this.ctx.stroke();
+        this.ctx.restore();
+
+        // 3. Simultaneous Indicator
+        if (note.isSimultaneous) {
+            this.ctx.save();
+            this.ctx.globalCompositeOperation = 'screen';
+            this.ctx.beginPath();
+            this.ctx.moveTo(pos.x - 20, pos.y);
+            this.ctx.lineTo(pos.x + 20, pos.y);
+            this.ctx.lineWidth = 4;
+            this.ctx.strokeStyle = '#ffffff';
+            this.ctx.shadowBlur = 20;
+            this.ctx.shadowColor = '#ffffff';
+            this.ctx.stroke();
+            this.ctx.restore();
+        }
+    }
+
+    spawnHitEffect(targetIdx, judgment) {
+        if (targetIdx < 0 || targetIdx >= this.targetPoints.length) return;
+        const target = this.targetPoints[targetIdx];
+        this.effects.push({
+            x: target.x,
+            y: target.y,
+            color: target.color,
+            startTime: performance.now() - this.startTime,
+            judgment: judgment
+        });
+        this.spawnParticles(targetIdx, judgment);
+    }
+
+    spawnParticles(targetIdx, judgment) {
+        if (targetIdx < 0 || targetIdx >= this.targetPoints.length) return;
+        const target = this.targetPoints[targetIdx];
+
+        let count = 0;
+        let speed = 2; // base speed
+
+        if (judgment === 'PERFECT') { count = 20; speed = 6; }
+        else if (judgment === 'GREAT') { count = 12; speed = 4; }
+        else if (judgment === 'GOOD') { count = 5; speed = 2; }
+
+        for (let i = 0; i < count; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const spd = Math.random() * speed + 2;
+            this.particles.push({
+                x: target.x,
+                y: target.y,
+                vx: Math.cos(angle) * spd,
+                vy: Math.sin(angle) * spd,
+                color: target.color,
+                life: 1.0,
+                decay: 0.02 + Math.random() * 0.03,
+                size: Math.random() * 4 + 2
+            });
+        }
+    }
+
+    drawParticles() {
+        if (this.particles.length === 0) return;
+
+        this.ctx.save();
+        this.ctx.globalCompositeOperation = 'screen'; // Make them glow/add
+
+        // Update and filter
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            let p = this.particles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            p.life -= p.decay;
+
+            if (p.life <= 0) {
+                this.particles.splice(i, 1);
+                continue;
+            }
+
+            this.ctx.beginPath();
+            this.ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+            this.ctx.fillStyle = p.color;
+            this.ctx.globalAlpha = p.life;
+            this.ctx.fill();
+        }
+
+        this.ctx.restore();
+    }
+
+    drawEffects() {
+        const now = performance.now() - this.startTime;
+        // Filter out old effects (500ms duration)
+        this.effects = this.effects.filter(fx => (now - fx.startTime) < 500);
+
+        this.ctx.save();
+        this.effects.forEach(fx => {
+            const progress = (now - fx.startTime) / 500;
+            // Easing: fast out, slow in
+            const ease = 1 - Math.pow(1 - progress, 3);
+            const alpha = 1 - progress;
+
+            // Expanding ring
+            this.ctx.beginPath();
+            this.ctx.arc(fx.x, fx.y, 40 + ease * 40, 0, Math.PI * 2);
+            this.ctx.strokeStyle = fx.color;
+            this.ctx.lineWidth = 10 * alpha;
+            this.ctx.globalAlpha = alpha;
+            this.ctx.stroke();
+
+            // Inner flash
+            if (progress < 0.3) {
+                this.ctx.beginPath();
+                this.ctx.arc(fx.x, fx.y, 40, 0, Math.PI * 2);
+                this.ctx.fillStyle = `rgba(255, 255, 255, ${0.5 * (1 - progress / 0.3)})`;
+                this.ctx.fill();
+            }
+        });
+        this.ctx.restore();
+    }
+}
+window.onload = () => { window.game = new GameEngine(); };
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');

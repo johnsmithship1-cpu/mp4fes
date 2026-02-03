@@ -415,17 +415,19 @@ class GameEngine {
         }
         this.lastSpawnIdx = idx;
 
-        this.addNote(idx, isSimul);
+        const spawnTime = performance.now() - this.startTime;
+
+        this.addNote(idx, isSimul, spawnTime);
         if (isSimul) {
             let idx2 = (idx + Math.floor(this.numTargets / 2)) % this.numTargets;
-            this.addNote(idx2, true); // Mark both as simultaneous
+            this.addNote(idx2, true, spawnTime); // Mark both as simultaneous
         }
     }
 
-    addNote(targetIdx, isSimul) {
+    addNote(targetIdx, isSimul, customSpawnTime = null) {
         const note = {
             targetIdx: targetIdx,
-            spawnTime: (performance.now() - this.startTime),
+            spawnTime: customSpawnTime !== null ? customSpawnTime : (performance.now() - this.startTime),
             duration: this.noteDuration,
             isSimultaneous: isSimul,
             processed: false
@@ -752,18 +754,19 @@ class GameEngine {
                         const endAng = Math.max(ang1, ang2);
 
                         ctx.save();
-                        // Gradient stroke
-                        const grad = ctx.createLinearGradient(pos1.x, pos1.y, pos2.x, pos2.y);
-                        grad.addColorStop(0, pos1.color);
-                        grad.addColorStop(1, pos2.color);
-
+                        // White Glow Connection
                         ctx.beginPath();
                         ctx.arc(centerX, centerY, r, startAng, endAng);
-                        ctx.lineWidth = 8;
-                        ctx.strokeStyle = grad;
-                        ctx.globalAlpha = 0.6;
-                        ctx.shadowBlur = 10;
+
+                        // Strong white glow
+                        ctx.shadowBlur = 20;
                         ctx.shadowColor = 'white';
+
+                        // White core line
+                        ctx.strokeStyle = '#FFFFFF';
+                        ctx.lineWidth = 6;
+                        ctx.globalAlpha = 0.9;
+
                         ctx.stroke();
                         ctx.restore();
                     }
